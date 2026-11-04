@@ -8,6 +8,7 @@ let selected;
 const entities = { 101: { classes: ['Unit', 'Soldier'] }, 202: { classes: ['Structure'] } };
 const env = {
   Engine: { CameraFollowThirdPerson: id => calls.push(id) },
+  g_CharacterController: { stop: () => {} },
   g_Selection: { getFirstSelected: () => selected },
   GetEntityState: id => entities[id],
   hasClass: (state, className) => state.classes.includes(className)
