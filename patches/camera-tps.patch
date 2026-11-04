@@ -1,0 +1,358 @@
+diff --git a/binaries/data/config/default.cfg b/binaries/data/config/default.cfg
+index 57c0b765..1ea9dc40 100644
+--- a/binaries/data/config/default.cfg
++++ b/binaries/data/config/default.cfg
+@@ -238,7 +238,7 @@ quickload = "Shift+F8"
+ 
+ [hotkey.camera]
+ reset = "R"                                   ; Reset camera rotation to default.
+-follow = "F"                                  ; Follow the first unit in the selection
++follow = "F"                                  ; Toggle third-person view for the selected unit
+ rallypointfocus = ""                          ; Focus the camera on the rally point of the selected building
+ lastattackfocus = "Space"                     ; Focus the camera on the last notified attack
+ zoom.in = Plus, NumPlus                       ; Zoom camera in (continuous control)
+@@ -605,3 +605,12 @@ far = 4096.0                      ; Far plane distance
+ fov = 45.0                        ; Field of view (degrees), lower is narrow, higher is wide
+ height.smoothness = 0.5
+ height.min = 16
++
++; Third-person follow: camera stays low and behind the selected unit.
++thirdperson.distance = 9.0
++thirdperson.height = 4.4
++thirdperson.lookheight = 3.0
++thirdperson.shoulder = 1.0
++thirdperson.smoothness = 8.0
++thirdperson.fov = 68.0
++thirdperson.near = 0.2
+diff --git a/binaries/data/mods/public/gui/hotkeys/spec/camera.json b/binaries/data/mods/public/gui/hotkeys/spec/camera.json
+index 60db586c..47511f02 100644
+--- a/binaries/data/mods/public/gui/hotkeys/spec/camera.json
++++ b/binaries/data/mods/public/gui/hotkeys/spec/camera.json
+@@ -12,8 +12,8 @@
+ 				"desc": "Reset camera rotation to default."
+ 			},
+ 			"camera.follow": {
+-				"name": "Follow Unit",
+-				"desc": "Follow the first unit in the selection."
++				"name": "Toggle Third-Person Camera",
++				"desc": "Follow the first selected unit from behind at ground level; press again for RTS view."
+ 			},
+ 			"camera.rallypointfocus": {
+ 				"name": "Focus on rallypoint",
+diff --git a/binaries/data/mods/public/gui/session/hotkeys/camera.xml b/binaries/data/mods/public/gui/session/hotkeys/camera.xml
+index 8b43249b..1090b05e 100644
+--- a/binaries/data/mods/public/gui/session/hotkeys/camera.xml
++++ b/binaries/data/mods/public/gui/session/hotkeys/camera.xml
+@@ -1,8 +1,8 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <object>
+-	<!-- camera.follow mode - follow the first unit in the selection -->
++	<!-- Low third-person camera follows the first selected unit; F toggles RTS view. -->
+ 	<object hotkey="camera.follow">
+-		<action on="Press">setCameraFollow(g_Selection.getFirstSelected());</action>
++		<action on="Press">toggleThirdPersonCamera();</action>
+ 	</object>
+ 
+ 	<object hotkey="camera.rallypointfocus">
+diff --git a/binaries/data/mods/public/gui/session/session.js b/binaries/data/mods/public/gui/session/session.js
+index a3a047e1..73c34922 100644
+--- a/binaries/data/mods/public/gui/session/session.js
++++ b/binaries/data/mods/public/gui/session/session.js
+@@ -277,6 +277,7 @@ function init(initData, hotloadData)
+ 	g_Cheats = new Cheats();
+ 	g_DiplomacyColors = new DiplomacyColors();
+ 	g_PlayerViewControl = new PlayerViewControl();
++	registerEntitySelectionChangeHandler(updateThirdPersonCamera);
+ 	g_PlayerViewControl.registerViewedPlayerChangeHandler(g_DiplomacyColors.updateDisplayedPlayerColors.bind(g_DiplomacyColors));
+ 	g_DiplomacyColors.registerDiplomacyColorsChangeHandler(g_PlayerViewControl.rebuild.bind(g_PlayerViewControl));
+ 	g_DiplomacyColors.registerDiplomacyColorsChangeHandler(updateGUIObjects);
+@@ -330,6 +331,7 @@ function init(initData, hotloadData)
+ 
+ 	// TODO: use event instead
+ 	onSimulationUpdate();
++	updateThirdPersonCamera();
+ 
+ 	setTimeout(displayGamestateNotifications, 1000);
+ }
+diff --git a/binaries/data/mods/public/gui/session/third_person_camera.js b/binaries/data/mods/public/gui/session/third_person_camera.js
+new file mode 100644
+index 00000000..722af121
+--- /dev/null
++++ b/binaries/data/mods/public/gui/session/third_person_camera.js
+@@ -0,0 +1,24 @@
++/** Third-person mode for the first selected unit. RTS mode remains available with F. */
++var g_ThirdPersonCameraEnabled = true;
++
++function updateThirdPersonCamera()
++{
++	if (!g_ThirdPersonCameraEnabled)
++		return;
++
++	let unit = g_Selection.getFirstSelected();
++	let state = unit && GetEntityState(unit);
++	if (state && hasClass(state, "Unit"))
++		Engine.CameraFollowThirdPerson(unit);
++	else
++		Engine.CameraFollowThirdPerson(0);
++}
++
++function toggleThirdPersonCamera()
++{
++	g_ThirdPersonCameraEnabled = !g_ThirdPersonCameraEnabled;
++	if (g_ThirdPersonCameraEnabled)
++		updateThirdPersonCamera();
++	else
++		Engine.CameraFollowThirdPerson(0);
++}
+diff --git a/source/graphics/CameraController.cpp b/source/graphics/CameraController.cpp
+index c1344744..a838bc1b 100644
+--- a/source/graphics/CameraController.cpp
++++ b/source/graphics/CameraController.cpp
+@@ -43,6 +43,9 @@
+ #include "simulation2/components/ICmpRangeManager.h"
+ #include "simulation2/helpers/Los.h"
+ 
++#include <algorithm>
++#include <cmath>
++
+ extern int g_xres, g_yres;
+ 
+ // Maximum distance outside the edge of the map that the camera's
+@@ -54,6 +57,8 @@ CCameraController::CCameraController(CCamera& camera)
+ 	  m_ConstrainCamera(true),
+ 	  m_FollowEntity(INVALID_ENTITY),
+ 	  m_FollowFirstPerson(false),
++	  m_FollowThirdPerson(false),
++	  m_ThirdPersonTarget(0, 0, 0),
+ 
+ 	  // Dummy values (these will be filled in by the config file)
+ 	  m_ViewScrollSpeed(0),
+@@ -79,6 +84,13 @@ CCameraController::CCameraController(CCamera& camera)
+ 	  m_ViewFar(4096.f),
+ 	  m_HeightSmoothness(0.5f),
+ 	  m_HeightMin(16.f),
++	  m_ThirdPersonDistance(9.f),
++	  m_ThirdPersonHeight(4.4f),
++	  m_ThirdPersonLookHeight(3.0f),
++	  m_ThirdPersonShoulder(1.0f),
++	  m_ThirdPersonSmoothness(8.f),
++	  m_ThirdPersonFOV(68.f),
++	  m_ThirdPersonNear(0.2f),
+ 
+ 	  m_PosX(0, 0, 0.01f),
+ 	  m_PosY(0, 0, 0.01f),
+@@ -124,6 +136,13 @@ void CCameraController::LoadConfig()
+ 
+ 	CFG_GET_VAL("view.height.smoothness", m_HeightSmoothness);
+ 	CFG_GET_VAL("view.height.min", m_HeightMin);
++	CFG_GET_VAL("view.thirdperson.distance", m_ThirdPersonDistance);
++	CFG_GET_VAL("view.thirdperson.height", m_ThirdPersonHeight);
++	CFG_GET_VAL("view.thirdperson.lookheight", m_ThirdPersonLookHeight);
++	CFG_GET_VAL("view.thirdperson.shoulder", m_ThirdPersonShoulder);
++	CFG_GET_VAL("view.thirdperson.smoothness", m_ThirdPersonSmoothness);
++	CFG_GET_VAL("view.thirdperson.fov", m_ThirdPersonFOV);
++	CFG_GET_VAL("view.thirdperson.near", m_ThirdPersonNear);
+ 
+ #define SETUP_SMOOTHNESS(CFG_PREFIX, SMOOTHED_VALUE) \
+ 	{ \
+@@ -206,6 +225,11 @@ void CCameraController::Update(const float deltaRealTime)
+ 	if (HotkeyIsPressed("camera.down"))
+ 		moveForward -= m_ViewScrollSpeed * deltaRealTime;
+ 
++	// RTS edge scrolling / WASD must not drop the new attached camera.
++	// Character movement can be mapped to these keys in a later milestone.
++	if (m_FollowEntity && m_FollowThirdPerson)
++		moveRightward = moveForward = 0.f;
++
+ 	if (moveRightward || moveForward)
+ 	{
+ 		// Break out of following mode when the user starts scrolling
+@@ -231,8 +255,44 @@ void CCameraController::Update(const float deltaRealTime)
+ 			CMatrix3D transform = cmpPosition->GetInterpolatedTransform(frameOffset);
+ 			CVector3D pos = transform.GetTranslation();
+ 
++			if (m_FollowThirdPerson)
++			{
++				// Interpolated simulation transform prevents the camera from jittering
++				// at the fixed simulation tick rate. A yaw of zero faces +Z in
++				// 0 A.D., matching the existing first-person follow camera.
++				float x, z, angle;
++				cmpPosition->GetInterpolatedPosition2D(frameOffset, x, z, angle);
++				const CVector3D forward(std::sin(angle), 0.f, std::cos(angle));
++				const CVector3D right(forward.Z, 0.f, -forward.X);
++				const CVector3D focus = pos + CVector3D(0.f, m_ThirdPersonLookHeight, 0.f);
++				CVector3D desiredPos = pos - forward * std::max(1.f, m_ThirdPersonDistance) +
++					right * m_ThirdPersonShoulder + CVector3D(0.f, m_ThirdPersonHeight, 0.f);
++
++				// Unlike the RTS camera's 16-unit minimum height, this mode is at
++				// character height. Only lift it when terrain would occlude the eye.
++				const CTerrain& terrain = g_Game->GetWorld()->GetTerrain();
++				desiredPos.Y = std::max(desiredPos.Y,
++					terrain.GetExactGroundLevel(desiredPos.X, desiredPos.Z) + 1.f);
++				const float follow = Clamp(1.f - std::exp(-std::max(0.f, deltaRealTime) *
++					std::max(0.f, m_ThirdPersonSmoothness)), 0.f, 1.f);
++				const CVector3D currentPos = m_Camera.GetOrientation().GetTranslation();
++				CVector3D cameraPos = currentPos + (desiredPos - currentPos) * follow;
++				if ((focus - cameraPos).Length() < 0.1f)
++					cameraPos = desiredPos;
++				cameraPos.Y = std::max(cameraPos.Y,
++					terrain.GetExactGroundLevel(cameraPos.X, cameraPos.Z) + 1.f);
++
++				m_ThirdPersonTarget = focus;
++				m_Camera.SetPerspectiveProjection(
++					std::max(0.05f, m_ThirdPersonNear), m_ViewFar,
++					DEGTORAD(Clamp(m_ThirdPersonFOV, 40.f, 100.f)));
++				m_Camera.LookAt(cameraPos, focus, CVector3D(0.f, 1.f, 0.f));
++				m_Camera.UpdateFrustum();
++				return;
++			}
+ 			if (m_FollowFirstPerson)
+ 			{
++				SetCameraProjection();
+ 				float x, z, angle;
+ 				cmpPosition->GetInterpolatedPosition2D(frameOffset, x, z, angle);
+ 				float height = 4.f;
+@@ -261,6 +321,7 @@ void CCameraController::Update(const float deltaRealTime)
+ 		{
+ 			// The unit disappeared (died or garrisoned etc), so stop following it
+ 			m_FollowEntity = INVALID_ENTITY;
++			m_FollowThirdPerson = false;
+ 		}
+ 	}
+ 
+@@ -412,11 +473,15 @@ CVector3D CCameraController::GetSmoothPivot(CCamera& camera) const
+ 
+ CVector3D CCameraController::GetCameraPivot() const
+ {
++	if (m_FollowEntity && m_FollowThirdPerson)
++		return m_ThirdPersonTarget;
+ 	return GetSmoothPivot(m_Camera);
+ }
+ 
+ CVector3D CCameraController::GetCameraPosition() const
+ {
++	if (m_FollowEntity && m_FollowThirdPerson)
++		return m_Camera.GetOrientation().GetTranslation();
+ 	return CVector3D(m_PosX.GetValue(), m_PosY.GetValue(), m_PosZ.GetValue());
+ }
+ 
+@@ -499,6 +564,14 @@ void CCameraController::FollowEntity(entity_id_t entity, bool firstPerson)
+ {
+ 	m_FollowEntity = entity;
+ 	m_FollowFirstPerson = firstPerson;
++	m_FollowThirdPerson = false;
++}
++
++void CCameraController::FollowEntityThirdPerson(entity_id_t entity)
++{
++	m_FollowEntity = entity;
++	m_FollowFirstPerson = false;
++	m_FollowThirdPerson = entity != INVALID_ENTITY;
+ }
+ 
+ entity_id_t CCameraController::GetFollowedEntity()
+diff --git a/source/graphics/CameraController.h b/source/graphics/CameraController.h
+index dc07f2ef..9b8ae239 100644
+--- a/source/graphics/CameraController.h
++++ b/source/graphics/CameraController.h
+@@ -41,6 +41,7 @@ public:
+ 	void MoveCameraTarget(const CVector3D& target) override;
+ 	void ResetCameraTarget(const CVector3D& target) override;
+ 	void FollowEntity(entity_id_t entity, bool firstPerson) override;
++	void FollowEntityThirdPerson(entity_id_t entity) override;
+ 	entity_id_t GetFollowedEntity() override;
+ 
+ 	void Update(const float deltaRealTime) override;
+@@ -84,6 +85,10 @@ private:
+ 	* Whether to follow FollowEntity in first-person mode.
+ 	*/
+ 	bool m_FollowFirstPerson;
++	/** Native low-angle camera that follows behind a selected unit. */
++	bool m_FollowThirdPerson;
++	/** Unit focus used by GUI queries while third-person mode is active. */
++	CVector3D m_ThirdPersonTarget;
+ 
+ 	// Settings
+ 	float m_ViewScrollSpeed;
+@@ -110,6 +115,13 @@ private:
+ 	float m_ViewFar;
+ 	float m_HeightSmoothness;
+ 	float m_HeightMin;
++	float m_ThirdPersonDistance;
++	float m_ThirdPersonHeight;
++	float m_ThirdPersonLookHeight;
++	float m_ThirdPersonShoulder;
++	float m_ThirdPersonSmoothness;
++	float m_ThirdPersonFOV;
++	float m_ThirdPersonNear;
+ 
+ 	// Camera Controls State
+ 	CSmoothedValue m_PosX;
+diff --git a/source/graphics/GameView.cpp b/source/graphics/GameView.cpp
+index 0085cc91..57104e75 100644
+--- a/source/graphics/GameView.cpp
++++ b/source/graphics/GameView.cpp
+@@ -349,6 +349,11 @@ void CGameView::FollowEntity(entity_id_t entity, bool firstPerson)
+ 	m->CameraController->FollowEntity(entity, firstPerson);
+ }
+ 
++void CGameView::FollowEntityThirdPerson(entity_id_t entity)
++{
++	m->CameraController->FollowEntityThirdPerson(entity);
++}
++
+ entity_id_t CGameView::GetFollowedEntity()
+ {
+ 	return m->CameraController->GetFollowedEntity();
+diff --git a/source/graphics/GameView.h b/source/graphics/GameView.h
+index fd92c887..ed44a655 100644
+--- a/source/graphics/GameView.h
++++ b/source/graphics/GameView.h
+@@ -68,6 +68,7 @@ public:
+ 	void MoveCameraTarget(const CVector3D& target);
+ 	void ResetCameraTarget(const CVector3D& target);
+ 	void FollowEntity(entity_id_t entity, bool firstPerson);
++	void FollowEntityThirdPerson(entity_id_t entity);
+ 	entity_id_t GetFollowedEntity();
+ 
+ 	#define DECLARE_BOOLEAN_SETTING(NAME) \
+diff --git a/source/graphics/ICameraController.h b/source/graphics/ICameraController.h
+index 5715fe56..e49af23a 100644
+--- a/source/graphics/ICameraController.h
++++ b/source/graphics/ICameraController.h
+@@ -50,6 +50,7 @@ public:
+ 	virtual void MoveCameraTarget(const CVector3D& target) = 0;
+ 	virtual void ResetCameraTarget(const CVector3D& target) = 0;
+ 	virtual void FollowEntity(entity_id_t entity, bool firstPerson) = 0;
++	virtual void FollowEntityThirdPerson(entity_id_t entity) = 0;
+ 	virtual entity_id_t GetFollowedEntity() = 0;
+ 
+ 	virtual void Update(const float deltaRealTime) = 0;
+diff --git a/source/graphics/scripting/JSInterface_GameView.cpp b/source/graphics/scripting/JSInterface_GameView.cpp
+index c96f904f..9ed3b206 100644
+--- a/source/graphics/scripting/JSInterface_GameView.cpp
++++ b/source/graphics/scripting/JSInterface_GameView.cpp
+@@ -178,6 +178,15 @@ void CameraFollowFPS(entity_id_t entityid)
+ 	g_Game->GetView()->FollowEntity(entityid, true);
+ }
+ 
++/** Follow a unit at ground level, behind its interpolated position. */
++void CameraFollowThirdPerson(entity_id_t entityid)
++{
++	if (!g_Game || !g_Game->GetView())
++		return;
++
++	g_Game->GetView()->FollowEntityThirdPerson(entityid);
++}
++
+ entity_id_t GetFollowedEntity()
+ {
+ 	if (!g_Game || !g_Game->GetView())
+@@ -205,6 +214,7 @@ void RegisterScriptFunctions(const ScriptRequest& rq)
+ 	ScriptFunction::Register<&SetCameraData>(rq, "SetCameraData");
+ 	ScriptFunction::Register<&CameraFollow>(rq, "CameraFollow");
+ 	ScriptFunction::Register<&CameraFollowFPS>(rq, "CameraFollowFPS");
++	ScriptFunction::Register<&CameraFollowThirdPerson>(rq, "CameraFollowThirdPerson");
+ 	ScriptFunction::Register<&GetFollowedEntity>(rq, "GetFollowedEntity");
+ 	ScriptFunction::Register<&GetTerrainAtScreenPoint>(rq, "GetTerrainAtScreenPoint");
+ }
