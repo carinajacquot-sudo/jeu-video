@@ -1,80 +1,71 @@
-# Astreval — jeu vidéo construit dans le vrai code de 0 A.D.
+# Astreval — héros à cape noire dans le vrai 0 A.D.
 
-Le projet modifie **Pyrogenesis et le mod public de 0 A.D.**, sans prototype Godot. La deuxième étape est disponible : un personnage 3D Kenney est jouable en vue à la troisième personne dans une petite carte de démonstration native. Le jeu de stratégie d'origine reste accessible.
+**Le petit personnage Kenney a été remplacé.** Le protagoniste est désormais un **humain aux proportions de 0 A.D.**, portant une armure sombre, un casque, une **cape noire animée** et une **grande épée 3D en diagonale dans le dos**. Il reste jouable en vue à la troisième personne dans le moteur natif Pyrogenesis ; la caméra RTS et le reste du jeu fonctionnent toujours.
 
-![Héros Kenney sélectionné dans 0 A.D.](screenshots/astreval-kenney-tps.png)
+![Gardien d'Astreval, cape noire et grande épée, dans la carte native d'Arcadie](screenshots/astreval-gardien-noir-arcadie.png)
 
-## Jouer à l'étape 2
+## Essayer le héros
 
-Dans le Codespace, le code 0 A.D. est dans `/workspaces/0ad`, branche `astreval/character-controls`, commit **`1d63fd04`**. L'exécutable release a été compilé dans `binaries/system/pyrogenesis`. Sur un ordinateur Linux doté d'un affichage graphique, après application des correctifs et compilation :
+Dans le Codespace du projet, le code source 0 A.D. est sous `/workspaces/0ad`, branche **`astreval/hero-black-cape`**, commit **`ba12e471`** ; une version release du moteur a été compilée. Sur une machine Linux avec affichage graphique, une fois le correctif appliqué et le moteur compilé :
 
 ```sh
 cd /workspaces/0ad
-binaries/system/pyrogenesis -autostart=scenarios/astreval_first_steps
+binaries/system/pyrogenesis -autostart=scenarios/astreval_arcadia
 ```
 
-La carte **« Astreval — premiers pas »** contient le héros, deux alliés et deux adversaires éloignés. Pour la retrouver dans les menus, chercher son nom parmi les cartes *Scénarios*. Ce n'est pas encore une campagne ou un monde finalisé : le terrain plat sert de banc d'essai aux contrôles.
+Cette version **« Astreval — Gardien noir d’Arcadie »** reprend le paysage, les bâtiments et les armées de la carte 0 A.D. *Arcadia* sans modifier l'original : une unité alliée y est remplacée par le héros, placé à l'écart de la foule pour que la cape et l'épée soient visibles. La carte plus simple `scenarios/astreval_first_steps` reste disponible pour tester les contrôles sur un terrain plat.
 
-| Touche | Action |
+| Touche | Effet |
 | --- | --- |
-| **F4** | Sélectionner son héros (ou une unité d'infanterie sur une autre carte) et cadrer la caméra TPS. |
-| **Z / W** | Avancer dans la direction du personnage. |
-| **Q / A**, **S**, **D** | Aller à gauche, reculer, aller à droite ; les diagonales sont normalisées. |
-| **Maj** | Courir pendant un déplacement. |
-| **F** | Basculer entre la caméra derrière l'unité et la caméra RTS d'origine. |
+| **F4** | Sélectionner le héros et attacher la caméra derrière lui. |
+| **Z / W** | Avancer selon l'orientation du personnage. |
+| **Q / A**, **S**, **D** | Aller à gauche, reculer, aller à droite. |
+| **Maj** | Courir pendant le déplacement. |
+| **F** | Alterner entre caméra du personnage et caméra RTS classique. |
 
-Le déplacement direct n'est actif que pour **une unité possédée et sélectionnée en mode TPS**. Relâcher les touches, changer de sélection, mettre en pause ou quitter le mode TPS arrête le personnage. La simulation, la collision et la recherche de chemin restent gérées par 0 A.D. : le client n'effectue aucune téléportation. Les commandes sont bornées en distance, limitées en fréquence et validées côté simulation.
+Le déplacement ne commande qu'une unité sélectionnée et possédée, en mode TPS. Relâcher les touches, changer de sélection ou mettre en pause l'arrête. Les diagonales sont normalisées ; la commande réseau `character-move` est limitée en fréquence et validée **dans la simulation** (propriété, type d'entité, coordonnées et distance). La collision et le cheminement restent ceux de 0 A.D., sans téléportation.
 
-> Le jeu natif n'est **pas une application jouable directement dans l'onglet navigateur** du Codespace. Les essais graphiques décrits ci-dessous ont été effectués sous Xvfb ; pour y jouer normalement, utiliser un affichage Linux/X11 ou un bureau distant configuré séparément.
+> Ce moteur natif **n'est pas directement jouable dans l'onglet web du Codespace**. Les captures et essais graphiques ont été réalisés sous Xvfb ; pour jouer normalement, il faut un affichage Linux/X11 ou un bureau distant configuré à part.
 
-## Ce qui est inclus
+## Installation rapide : correctif final unique
 
-1. **Étape 1 — caméra TPS :** commit 0 A.D. `0572a783`, correctif [`patches/camera-tps.patch`](patches/camera-tps.patch). Caméra C++ interpolée derrière la première unité sélectionnée, bascule **F**, retour possible aux commandes RTS.
-2. **Étape 2 — personnage et contrôles :** commit `1d63fd04`, correctif [`patches/character-controls.patch`](patches/character-controls.patch), à appliquer **après** l'étape 1. Raccourcis ZQSD/WASD et Maj, contrôleur GUI, commande réseau `character-move` validée côté simulation, sélection **F4**, carte de démonstration et modèle 3D Kenney.
-3. **Personnage Kenney Mini Characters 1 :** GLB source et licence CC0 conservés dans `binaries/data/mods/public/art/source/kenney/` ; maillage skinné, squelette et six animations COLLADA importés par 0 A.D. : **Idle**, **Walk**, **Run** (clip `sprint`), **attack_melee**, **Death**, **Jump**. Le portrait provient du même GLB. Le clip *Jump* est préparé, mais **aucun saut jouable ni physique de saut n'a été ajouté**.
-
-Les sources reproductibles de conversion et du portrait sont dans `tools/convert_kenney.py` et `tools/render_kenney_portrait.py` sur la branche 0 A.D. Blender **3.6 LTS** est requis pour réexporter en COLLADA (l'exporteur COLLADA n'est plus disponible dans le Blender 4.0.2 installé via Ubuntu). Les fichiers `.dae` prêts à l'emploi sont déjà fournis dans le correctif : Blender n'est **pas requis pour jouer**. La texture externe `colormap.png` doit se trouver à côté du GLB dans un sous-dossier `Textures/` lors d'une reconversion.
-
-## Appliquer les correctifs à un clone propre
-
-Les deux correctifs sont basés sur le même commit source 0 A.D. **`61a3b950`**. La branche déjà modifiée du Codespace ne doit pas recevoir une deuxième fois ces correctifs. Pour un clone neuf au commit indiqué :
+Le correctif recommandé **[`patches/astreval-complete.patch`](patches/astreval-complete.patch)** part du commit source 0 A.D. **`61a3b950`** et installe directement la version finale **sans aucun asset Kenney**. Il inclut le moteur/caméra, les contrôles, le héros humain, sa grande épée et les deux cartes de démonstration.
 
 ```sh
 cd /chemin/vers/0ad
 git switch --detach 61a3b950
 git switch -c astreval-jouable
-git apply --check /chemin/vers/jeu-video/patches/camera-tps.patch
-git apply /chemin/vers/jeu-video/patches/camera-tps.patch
-git apply --check /chemin/vers/jeu-video/patches/character-controls.patch
-git apply /chemin/vers/jeu-video/patches/character-controls.patch
+git apply --check /chemin/vers/jeu-video/patches/astreval-complete.patch
+git apply /chemin/vers/jeu-video/patches/astreval-complete.patch
 ```
 
-Construire ensuite selon les [instructions de compilation officielles de 0 A.D.](https://gitea.wildfiregames.com/0ad/0ad/wiki/BuildInstructions). Le Codespace dispose déjà des dépendances, de SpiderMonkey et d'une version release compilée. Le patch de l'étape 2 inclut les fichiers binaires du GLB et des textures (`git apply` les gère).
+Ne **pas** réappliquer ce correctif dans le Codespace déjà modifié. Pour compiler un clone neuf, suivre les [instructions officielles de 0 A.D.](https://gitea.wildfiregames.com/0ad/0ad/wiki/BuildInstructions). L'exécutable compilé dans le Codespace n'est pas un binaire distribué sur GitHub.
 
-## Vérifications réellement effectuées
+Les correctifs historiques, si l'on veut reconstruire les étapes séparément, sont [`camera-tps.patch`](patches/camera-tps.patch) → [`character-controls.patch`](patches/character-controls.patch) → [`hero-black-cape.patch`](patches/hero-black-cape.patch). **Le patch intermédiaire contient encore Kenney ; le troisième le retire.** Sur un clone neuf, préférer le correctif final unique ci-dessus, vérifié sur l'index du commit de base.
 
-- Compilation et édition de liens du moteur natif release : `pyrogenesis -version` affiche `Pyrogenesis 0.0.27`.
-- Quatre tests Node dans le Codespace : `third_person_camera.test.js`, `character_controller.test.js`, `character_commands.test.js`, `character_assets.test.js` — tous réussis. Ils simulent l'API pour les contrôles et vérifient la structure des assets ; ils ne remplacent pas les essais en jeu.
-- Démarrage natif non visuel de `scenarios/astreval_first_steps`, plus de 78 000 tours sans erreur lors d'un essai limité par `timeout`.
-- Partie graphique réelle sous **Xvfb** et rendu logiciel : personnage et portrait affichés ; F4 sélectionne le héros ; W le déplace, Maj active la course, arrêt au relâchement ; aucun échec de chargement d'asset ni de script dans les journaux. Les seuls avertissements concernent le pilote logiciel `llvmpipe`.
-- Correctif de l'étape 2 contrôlé en sens inverse sur son commit et en sens normal sur un index au commit `0572a783` ; copie de contrôle Git propre.
+## Modèle, animations et limites
 
-Pour lancer les tests fournis **dans ce Codespace**, où leurs chemins absolus pointent vers `/workspaces/0ad` :
+Le corps skinné, le visage, le casque, l'armure noire et les grèves proviennent des **assets humains existants de 0 A.D.** La longue cape noire utilise l'acteur animé `props/units/capes/cape_long_black.xml`. L'épée géante est un **nouveau maillage 3D** avec texture acier/or/cuir et attache sur le dos. Son générateur source est dans `tools/build_astreval_greatsword.py` (Blender 3.6 LTS ; Blender n'est **pas nécessaire pour jouer**, car le `.dae` et la texture sont inclus). La carte paysagée dérivée d'Arcadia peut être recréée avec `tools/make_astreval_arcadia.py`.
+
+Les animations humaines de 0 A.D. assurent l'attente, la marche, la course, l'attaque et la mort ; la cape suit les mouvements. **L'épée reste visuellement fixée dans le dos** : il n'y a pas encore de dégainage personnalisé ni d'attaque spéciale à la grande épée. Le saut jouable n'a pas non plus été ajouté. Le projet est une étape de personnage/contrôles, pas encore un monde ou une campagne achevée.
+
+## Vérifications effectuées dans le Codespace
+
+- Moteur 0 A.D. **compilé et réédité** après le réglage de caméra ; `pyrogenesis -version` indique `Pyrogenesis 0.0.27`.
+- **Quatre tests Node** réussis : caméra, contrôleur, validation des ordres de simulation, assets du héros humain et cartes.
+- Deux parties natives non visuelles : `astreval_first_steps` (environ **49 000 tours**) et `astreval_arcadia` (environ **9 800 tours**), sans erreur dans les journaux pendant les essais limités en temps.
+- Essai graphique réel sous **Xvfb** : F4 sélectionne le nouveau héros, cape et épée s'affichent, la marche et la course fonctionnent sur les deux cartes ; aucun échec de chargement d'asset. Seuls avertissements : rendu logiciel `llvmpipe`.
+- [`hero-black-cape.patch`](patches/hero-black-cape.patch) validé dans les deux sens (ancien/nouveau commit). Le **correctif complet** est également vérifié en sens normal sur la base `61a3b950` et en sens inverse sur le commit final.
+
+Dans **ce Codespace**, où les tests visent les chemins `/workspaces/0ad` et `/workspaces/jeu-video` :
 
 ```sh
 cd /workspaces/jeu-video
-node tests/third_person_camera.test.js
-node tests/character_controller.test.js
-node tests/character_commands.test.js
-node tests/character_assets.test.js
+for test in tests/*.test.js; do node "$test"; done
 ```
 
-## Ressources, droits et suites possibles
+## Droits et provenance
 
-- **Kenney, Mini Characters 1** : source [Kenney](https://kenney.nl/assets/mini-characters) / [OpenGameArt](https://opengameart.org/content/mini-character-1), **CC0** (licence originale incluse). C'est le **seul pack externe effectivement intégré** à l'étape 2.
-- **Mixamo** : personnages et animations utilisables dans des jeux suivant les [conditions Adobe](https://helpx.adobe.com/creative-cloud/faq/mixamo-faq.html) ; compte Adobe et droits distincts du CC0. Rien d'importé.
-- **Poly Haven** : [ressources CC0](https://polyhaven.com/license), dont textures et décors possibles pour une prochaine carte. Rien d'importé.
-- **Sketchfab** : [licence et attribution à vérifier modèle par modèle](https://sketchfab.com/developers/download-api/guidelines) ; rien d'importé.
-- **OpenGameArt** : licences variables selon la ressource ; le pack Kenney ci-dessus est CC0. Les autres packs repérés (*Fantasy Town Kit*, *Mini Dungeon*) ne sont pas intégrés.
+Le code modifié de 0 A.D. reste sous **GPL-2.0-ou-ultérieure** ; les assets historiques de 0 A.D. (armure, cape, animations, textures, portrait) relèvent de la licence indiquée dans le [`LICENSE.txt` de 0 A.D.](licenses/0ad-LICENSE.txt) et sa [licence spécifique aux éléments graphiques](licenses/0ad-art-LICENSE.txt), notamment **CC BY-SA 3.0** pour l'art. Attribution : **Wildfire Games**, [wildfiregames.com](https://www.wildfiregames.com/) ; [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/). La carte paysagée est une adaptation de leur scénario *Arcadia* ; l'original est conservé. Les nouveaux fichiers d'art de l'épée sont distribués avec les fichiers du mod sous les mêmes conditions CC BY-SA 3.0. Le texte GPL est également copié dans [`licenses/GPL-2.0.txt`](licenses/GPL-2.0.txt).
 
-Le code de 0 A.D. et ses modifications restent sous **GPL-2.0-ou-ultérieure** (copie dans [`licenses/GPL-2.0.txt`](licenses/GPL-2.0.txt)) ; les assets historiques de 0 A.D. portent leurs propres licences. Le personnage Kenney et ses fichiers dérivés sont **CC0**. Les combats natifs demeurent pilotés par le système d'ordres de 0 A.D. : il reste à créer le véritable monde, les bâtiments, les quêtes et d'éventuelles commandes de combat/saut propres au personnage.
+Kenney, Mixamo, Poly Haven, Sketchfab et OpenGameArt ont été considérés lors de l'étape précédente, mais **aucun modèle externe n'est requis ou intégré au héros final**. En particulier, le personnage Kenney et sa licence CC0 n'apparaissent plus dans le correctif complet ni dans la branche actuelle ; seul le correctif historique de l'étape 2 garde la trace de cette première expérimentation.
