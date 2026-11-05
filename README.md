@@ -1,71 +1,71 @@
-# Astreval — héros à cape noire dans le vrai 0 A.D.
+# Astreval — rendu HD et combat à l’épée dans le vrai 0 A.D.
 
-**Le petit personnage Kenney a été remplacé.** Le protagoniste est désormais un **humain aux proportions de 0 A.D.**, portant une armure sombre, un casque, une **cape noire animée** et une **grande épée 3D en diagonale dans le dos**. Il reste jouable en vue à la troisième personne dans le moteur natif Pyrogenesis ; la caméra RTS et le reste du jeu fonctionnent toujours.
+Astreval est développé **dans le code natif 0 A.D./Pyrogenesis**, pas dans Godot. Le héros est un humain au style du jeu, en armure sombre, avec une cape noire et une grande épée : l’épée s’attache au dos ou à la main selon son état, et le combat utilise la simulation native de 0 A.D. Le rendu peut être configuré jusqu’à **3840×2160**, avec un profil plus léger.
 
-![Gardien d'Astreval, cape noire et grande épée, dans la carte native d'Arcadie](screenshots/astreval-gardien-noir-arcadie.png)
+![Héros d’Astreval, grande épée et combat dans le jeu natif](screenshots/astreval-duel-hd-combat.png)
 
-## Essayer le héros
+## Accéder à la version en cours
 
-Dans le Codespace du projet, le code source 0 A.D. est sous `/workspaces/0ad`, branche **`astreval/hero-black-cape`**, commit **`ba12e471`** ; une version release du moteur a été compilée. Sur une machine Linux avec affichage graphique, une fois le correctif appliqué et le moteur compilé :
+- **Codespace avec le véritable dépôt source 0 A.D. :** [ouvrir le Codespace](https://jeu-vid-o-5g6vqv5wq5jxh794r.github.dev), `/workspaces/0ad`, branche `astreval/4k-sword-combat`, commit `2200f531`.
+- Ce dépôt compagnon publie le **correctif incrémental complet, avec ses assets binaires** : [`patches/astreval-4k-combat.patch`](patches/astreval-4k-combat.patch). Il s’applique **après** le correctif jouable de l’étape précédente [`patches/astreval-complete.patch`](patches/astreval-complete.patch). Le premier correctif intermédiaire n’est pas un remplacement de la base.
+- Les fichiers 3D et textures finaux sont inclus dans le correctif. **Pas besoin de Blender, Pillow ni d’un service externe pour jouer.** Le Codespace web, à lui seul, ne diffuse pas la fenêtre graphique 3D : il faut un affichage Linux/X11 ou un bureau distant.
 
-```sh
-cd /workspaces/0ad
-binaries/system/pyrogenesis -autostart=scenarios/astreval_arcadia
-```
-
-Cette version **« Astreval — Gardien noir d’Arcadie »** reprend le paysage, les bâtiments et les armées de la carte 0 A.D. *Arcadia* sans modifier l'original : une unité alliée y est remplacée par le héros, placé à l'écart de la foule pour que la cape et l'épée soient visibles. La carte plus simple `scenarios/astreval_first_steps` reste disponible pour tester les contrôles sur un terrain plat.
-
-| Touche | Effet |
-| --- | --- |
-| **F4** | Sélectionner le héros et attacher la caméra derrière lui. |
-| **Z / W** | Avancer selon l'orientation du personnage. |
-| **Q / A**, **S**, **D** | Aller à gauche, reculer, aller à droite. |
-| **Maj** | Courir pendant le déplacement. |
-| **F** | Alterner entre caméra du personnage et caméra RTS classique. |
-
-Le déplacement ne commande qu'une unité sélectionnée et possédée, en mode TPS. Relâcher les touches, changer de sélection ou mettre en pause l'arrête. Les diagonales sont normalisées ; la commande réseau `character-move` est limitée en fréquence et validée **dans la simulation** (propriété, type d'entité, coordonnées et distance). La collision et le cheminement restent ceux de 0 A.D., sans téléportation.
-
-> Ce moteur natif **n'est pas directement jouable dans l'onglet web du Codespace**. Les captures et essais graphiques ont été réalisés sous Xvfb ; pour jouer normalement, il faut un affichage Linux/X11 ou un bureau distant configuré à part.
-
-## Installation rapide : correctif final unique
-
-Le correctif recommandé **[`patches/astreval-complete.patch`](patches/astreval-complete.patch)** part du commit source 0 A.D. **`61a3b950`** et installe directement la version finale **sans aucun asset Kenney**. Il inclut le moteur/caméra, les contrôles, le héros humain, sa grande épée et les deux cartes de démonstration.
+Sur une copie propre des sources 0 A.D. au commit `61a3b950` :
 
 ```sh
 cd /chemin/vers/0ad
 git switch --detach 61a3b950
-git switch -c astreval-jouable
+git switch -c astreval-hd-combat
 git apply --check /chemin/vers/jeu-video/patches/astreval-complete.patch
 git apply /chemin/vers/jeu-video/patches/astreval-complete.patch
+git apply --check /chemin/vers/jeu-video/patches/astreval-4k-combat.patch
+git apply /chemin/vers/jeu-video/patches/astreval-4k-combat.patch
 ```
 
-Ne **pas** réappliquer ce correctif dans le Codespace déjà modifié. Pour compiler un clone neuf, suivre les [instructions officielles de 0 A.D.](https://gitea.wildfiregames.com/0ad/0ad/wiki/BuildInstructions). L'exécutable compilé dans le Codespace n'est pas un binaire distribué sur GitHub.
+Ne **pas** réappliquer ces correctifs dans le Codespace déjà modifié. Pour reconstruire l’exécutable sur une autre machine, voir les [instructions officielles 0 A.D.](https://gitea.wildfiregames.com/0ad/0ad/wiki/BuildInstructions). Les anciens correctifs `camera-tps.patch`, `character-controls.patch` et `hero-black-cape.patch` restent archivés comme étapes historiques, **sans être nécessaires** si l’on utilise les deux correctifs ci-dessus.
 
-Les correctifs historiques, si l'on veut reconstruire les étapes séparément, sont [`camera-tps.patch`](patches/camera-tps.patch) → [`character-controls.patch`](patches/character-controls.patch) → [`hero-black-cape.patch`](patches/hero-black-cape.patch). **Le patch intermédiaire contient encore Kenney ; le troisième le retire.** Sur un clone neuf, préférer le correctif final unique ci-dessus, vérifié sur l'index du commit de base.
+## Jouer et choisir sa qualité
 
-## Modèle, animations et limites
-
-Le corps skinné, le visage, le casque, l'armure noire et les grèves proviennent des **assets humains existants de 0 A.D.** La longue cape noire utilise l'acteur animé `props/units/capes/cape_long_black.xml`. L'épée géante est un **nouveau maillage 3D** avec texture acier/or/cuir et attache sur le dos. Son générateur source est dans `tools/build_astreval_greatsword.py` (Blender 3.6 LTS ; Blender n'est **pas nécessaire pour jouer**, car le `.dae` et la texture sont inclus). La carte paysagée dérivée d'Arcadia peut être recréée avec `tools/make_astreval_arcadia.py`.
-
-Les animations humaines de 0 A.D. assurent l'attente, la marche, la course, l'attaque et la mort ; la cape suit les mouvements. **L'épée reste visuellement fixée dans le dos** : il n'y a pas encore de dégainage personnalisé ni d'attaque spéciale à la grande épée. Le saut jouable n'a pas non plus été ajouté. Le projet est une étape de personnage/contrôles, pas encore un monde ou une campagne achevée.
-
-## Vérifications effectuées dans le Codespace
-
-- Moteur 0 A.D. **compilé et réédité** après le réglage de caméra ; `pyrogenesis -version` indique `Pyrogenesis 0.0.27`.
-- **Quatre tests Node** réussis : caméra, contrôleur, validation des ordres de simulation, assets du héros humain et cartes.
-- Deux parties natives non visuelles : `astreval_first_steps` (environ **49 000 tours**) et `astreval_arcadia` (environ **9 800 tours**), sans erreur dans les journaux pendant les essais limités en temps.
-- Essai graphique réel sous **Xvfb** : F4 sélectionne le nouveau héros, cape et épée s'affichent, la marche et la course fonctionnent sur les deux cartes ; aucun échec de chargement d'asset. Seuls avertissements : rendu logiciel `llvmpipe`.
-- [`hero-black-cape.patch`](patches/hero-black-cape.patch) validé dans les deux sens (ancien/nouveau commit). Le **correctif complet** est également vérifié en sens normal sur la base `61a3b950` et en sens inverse sur le commit final.
-
-Dans **ce Codespace**, où les tests visent les chemins `/workspaces/0ad` et `/workspaces/jeu-video` :
+À partir de la racine 0 A.D. dans un environnement graphique Linux :
 
 ```sh
-cd /workspaces/jeu-video
-for test in tests/*.test.js; do node "$test"; done
+python3 tools/play_astreval.py --quality balanced --map astreval_duel
+python3 tools/play_astreval.py --quality cinematic --map astreval_arcadia
+python3 tools/play_astreval.py --quality performance --resolution 3840x2160
 ```
 
-## Droits et provenance
+| Profil | Usage |
+|---|---|
+| `cinematic` | Sortie 3840×2160, acteur HD, textures de qualité maximale, anisotropie ×16, éclairage/ombres avancés et anti-crénelage MSAA4. GPU récent conseillé. |
+| `balanced` | Résolution de l’écran, modèle plus léger, FXAA et ombres modérées. Profil du test visuel réel. |
+| `performance` | Sortie jusqu’à 3840×2160 mais rendu interne à 75 % avec mise à l’échelle FSR, détails/ombres allégés. Dépend des capacités du GPU. |
 
-Le code modifié de 0 A.D. reste sous **GPL-2.0-ou-ultérieure** ; les assets historiques de 0 A.D. (armure, cape, animations, textures, portrait) relèvent de la licence indiquée dans le [`LICENSE.txt` de 0 A.D.](licenses/0ad-LICENSE.txt) et sa [licence spécifique aux éléments graphiques](licenses/0ad-art-LICENSE.txt), notamment **CC BY-SA 3.0** pour l'art. Attribution : **Wildfire Games**, [wildfiregames.com](https://www.wildfiregames.com/) ; [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/). La carte paysagée est une adaptation de leur scénario *Arcadia* ; l'original est conservé. Les nouveaux fichiers d'art de l'épée sont distribués avec les fichiers du mod sous les mêmes conditions CC BY-SA 3.0. Le texte GPL est également copié dans [`licenses/GPL-2.0.txt`](licenses/GPL-2.0.txt).
+`--resolution 1920x1080`, `--resolution 3840x2160`, `--map astreval_first_steps` ou `--backend vulkan` sont également acceptés par le lanceur ; **Vulkan et le débit d’images en vraie 4K n’ont pas été validés sur une carte graphique physique**. Ces réglages n’altèrent pas la configuration personnelle du jeu. `--dry-run` affiche la commande au lieu de lancer le moteur.
 
-Kenney, Mixamo, Poly Haven, Sketchfab et OpenGameArt ont été considérés lors de l'étape précédente, mais **aucun modèle externe n'est requis ou intégré au héros final**. En particulier, le personnage Kenney et sa licence CC0 n'apparaissent plus dans le correctif complet ni dans la branche actuelle ; seul le correctif historique de l'étape 2 garde la trace de cette première expérimentation.
+| Touche | Effet |
+| --- | --- |
+| **F4** | Sélectionner le héros et suivre ses mouvements en TPS. |
+| **ZQSD / WASD**, **Maj** | Marcher, courir, se déplacer en diagonale. |
+| **F** | Basculer TPS / caméra RTS native. |
+| **E** | Dégainer ou ranger la grande épée sur le dos. |
+| **X**, **Maj+X** | Coup léger, ou coup lourd plus coûteux. Trois frappes légères en rythme forment un petit enchaînement. |
+| **V maintenu** | Garde frontale ; la parade est plus efficace juste après la mise en garde. |
+| **B** | Esquive directionnelle (repli en l’absence de touche de direction). |
+
+L’interface déplace les instructions en haut à droite et affiche l’endurance/l’état de l’épée. **La simulation** valide la propriété du héros, les cooldowns, la portée, la cible, le cône de garde, la résistance, l’endurance et les dégâts ; les ordres du client ne peuvent ni choisir arbitrairement les dégâts ni téléporter le héros. L’esquive emploie le pathfinding et les collisions natives. Les coups reposent sur les animations à deux mains existantes de 0 A.D.
+
+## Ce qui est réellement HD — et ses limites
+
+Le héros possède des variantes : cape noire **2048×4096**, armure **2048²** et épée **2048²** avec diffuse, normales et spéculaire ; la version légère emploie les textures originales. La prairie des cartes de démonstration utilise un scan authentique **4096²** de *Leafy Grass* de **Charlotte Baglioni / Poly Haven** (CC0), transformé en DDS BC1 **avec mipmaps** pour être décodable par Pyrogenesis. L’armature, les attaches `quiver_back` et `weapon_R` ainsi que les animations sont celles de 0 A.D. ; les deux maillages COLLADA de l’épée sont intégrés. Voir le [guide technique détaillé](docs/ASTREVAL_4K_COMBAT.md).
+
+**Limites honnêtes :** les autres soldats et l’ensemble des milliers de décors de la grande carte *Arcadia* demeurent des assets 0 A.D. natifs ; ils n’ont pas tous une nouvelle texture 4K ni une nouvelle géométrie. La dégaine, la roulade et une prise à deux mains dédiées n’ont pas encore d’animation originale : l’équipement change de point d’attache et les attaques réutilisent les animations 0 A.D. Les deux petites cartes de test sont volontairement simples et peuvent laisser apparaître une bande sombre à l’horizon. Ce n’est pas encore une direction artistique 4K entièrement finalisée.
+
+## Tests réalisés et références consultées
+
+- **Trois cartes** simulées dans le vrai moteur sans erreur de journal : `astreval_duel` (9 247 tours), `astreval_first_steps` (14 824 tours), `astreval_arcadia` (2 024 tours) lors du dernier cycle chronométré. Test Node `tools/test_astreval_combat.js` : équipement, parade directionnelle, esquive, enchaînement, coup lourd, raté et endurance réussis. Les assets XML ont été analysés.
+- Essai **graphique** dans 0 A.D. sous Xvfb/llvmpipe à **1280×720** : textures DDS corrigées, prairie visible, cape, épée passant effectivement du dos à la main, adversaire, garde/esquive/endurance ; aucune erreur de décodage dans le journal. Le profil cinématique à 720p se lance sans erreur mais le rendu logiciel met longtemps à finaliser l’image. **Aucun benchmark 3840×2160 sur GPU n’a été fait.**
+- Méthodes étudiées : [combat natif 0 A.D.](https://gitea.wildfiregames.com/0ad/0ad/wiki/Manual_BasicGameplay), [Alpha 27 (Vulkan, FSR, skin GPU)](https://play0ad.com/new-release-0-a-d-alpha-27-agni/), [guide communautaire Blender/COLLADA](https://wildfiregames.com/forum/topic/17842-how-to-export-animations-from-blender3d-to-0ad/), [licence Poly Haven](https://polyhaven.com/license). L’approche réutilise les composants et animations natifs, **pas du code tiers copié**.
+
+## Licences
+
+Le code 0 A.D. et ses adaptations restent sous **GPL-2.0-ou-ultérieure** ; les arts 0 A.D. historiques et leurs adaptations sont crédités à **Wildfire Games** suivant [les conditions graphiques 0 A.D.](licenses/0ad-art-LICENSE.txt), notamment **CC BY-SA 3.0**. La prairie Poly Haven est **CC0 1.0**, provenance détaillée dans `art/source/astreval/LEAFY_GRASS_LICENSE.txt` du correctif. Le personnage Kenney du prototype n’a **pas** été réintroduit. Le texte de la GPL est conservé dans [`licenses/GPL-2.0.txt`](licenses/GPL-2.0.txt).
