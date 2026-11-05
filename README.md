@@ -1,13 +1,15 @@
-# Astreval — rendu HD et combat à l’épée dans le vrai 0 A.D.
+# Astreval — villages, quête et combat HD dans le vrai 0 A.D.
 
-Astreval est développé **dans le code natif 0 A.D./Pyrogenesis**, pas dans Godot. Le héros est un humain au style du jeu, en armure sombre, avec une cape noire et une grande épée : l’épée s’attache au dos ou à la main selon son état, et le combat utilise la simulation native de 0 A.D. Le rendu peut être configuré jusqu’à **3840×2160**, avec un profil plus léger.
+Astreval est développé **dans le code natif 0 A.D./Pyrogenesis**, pas dans Godot. Le héros est un humain au style du jeu, en armure sombre, avec une cape noire et une grande épée : l’épée s’attache au dos ou à la main selon son état, et le combat utilise la simulation native de 0 A.D. Le rendu peut être configuré jusqu’à **3840×2160**, avec un profil plus léger. Sur Arcadie et sur une nouvelle carte, le héros visite les villages, parle aux habitants, choisit une quête et affronte ou négocie avec un chef rival ; les troupes restent commandables depuis la vue RTS.
 
 ![Héros d’Astreval, grande épée et combat dans le jeu natif](screenshots/astreval-duel-hd-combat.png)
 
+![Dialogue avec l’ancienne sur la nouvelle carte village](screenshots/astreval-village-dialogue.png)
+
 ## Accéder à la version en cours
 
-- **Codespace avec le véritable dépôt source 0 A.D. :** [ouvrir le Codespace](https://jeu-vid-o-5g6vqv5wq5jxh794r.github.dev), `/workspaces/0ad`, branche `astreval/4k-sword-combat`, commit `2200f531`.
-- Ce dépôt compagnon publie le **correctif incrémental complet, avec ses assets binaires** : [`patches/astreval-4k-combat.patch`](patches/astreval-4k-combat.patch). Il s’applique **après** le correctif jouable de l’étape précédente [`patches/astreval-complete.patch`](patches/astreval-complete.patch). Le premier correctif intermédiaire n’est pas un remplacement de la base.
+- **Codespace avec le véritable dépôt source 0 A.D. :** [ouvrir le Codespace](https://jeu-vid-o-5g6vqv5wq5jxh794r.github.dev), `/workspaces/0ad`, branche **`astreval/village-rts-quests`**, commit **`a0f37f40`** (l’étape HD/combat reste accessible via `astreval/4k-sword-combat`, `2200f531`).
+- Ce dépôt compagnon publie le **correctif incrémental complet, avec ses assets binaires** : [`patches/astreval-4k-combat.patch`](patches/astreval-4k-combat.patch). Il s’applique **après** le correctif jouable de l’étape précédente [`patches/astreval-complete.patch`](patches/astreval-complete.patch). Le premier correctif intermédiaire n’est pas un remplacement de la base. **Nouvelle étape :** appliquer ensuite [`patches/astreval-village-phase4.patch`](patches/astreval-village-phase4.patch), qui contient les deux cartes, les déclencheurs, le HUD et les tests Node. Voir le [guide des villages et quêtes](docs/ASTREVAL_VILLAGE_RTS_QUESTS.md).
 - Les fichiers 3D et textures finaux sont inclus dans le correctif. **Pas besoin de Blender, Pillow ni d’un service externe pour jouer.** Le Codespace web, à lui seul, ne diffuse pas la fenêtre graphique 3D : il faut un affichage Linux/X11 ou un bureau distant.
 
 Sur une copie propre des sources 0 A.D. au commit `61a3b950` :
@@ -20,15 +22,18 @@ git apply --check /chemin/vers/jeu-video/patches/astreval-complete.patch
 git apply /chemin/vers/jeu-video/patches/astreval-complete.patch
 git apply --check /chemin/vers/jeu-video/patches/astreval-4k-combat.patch
 git apply /chemin/vers/jeu-video/patches/astreval-4k-combat.patch
+git apply --check /chemin/vers/jeu-video/patches/astreval-village-phase4.patch
+git apply /chemin/vers/jeu-video/patches/astreval-village-phase4.patch
 ```
 
-Ne **pas** réappliquer ces correctifs dans le Codespace déjà modifié. Pour reconstruire l’exécutable sur une autre machine, voir les [instructions officielles 0 A.D.](https://gitea.wildfiregames.com/0ad/0ad/wiki/BuildInstructions). Les anciens correctifs `camera-tps.patch`, `character-controls.patch` et `hero-black-cape.patch` restent archivés comme étapes historiques, **sans être nécessaires** si l’on utilise les deux correctifs ci-dessus.
+Ne **pas** réappliquer ces trois correctifs dans le Codespace déjà modifié. Pour reconstruire l’exécutable sur une autre machine, voir les [instructions officielles 0 A.D.](https://gitea.wildfiregames.com/0ad/0ad/wiki/BuildInstructions). Les anciens correctifs `camera-tps.patch`, `character-controls.patch` et `hero-black-cape.patch` restent archivés comme étapes historiques, **sans être nécessaires** si l’on utilise les deux correctifs ci-dessus.
 
 ## Jouer et choisir sa qualité
 
 À partir de la racine 0 A.D. dans un environnement graphique Linux :
 
 ```sh
+python3 tools/play_astreval.py --quality balanced --map astreval_village
 python3 tools/play_astreval.py --quality balanced --map astreval_duel
 python3 tools/play_astreval.py --quality cinematic --map astreval_arcadia
 python3 tools/play_astreval.py --quality performance --resolution 3840x2160
@@ -46,13 +51,20 @@ python3 tools/play_astreval.py --quality performance --resolution 3840x2160
 | --- | --- |
 | **F4** | Sélectionner le héros et suivre ses mouvements en TPS. |
 | **ZQSD / WASD**, **Maj** | Marcher, courir, se déplacer en diagonale. |
-| **F** | Basculer TPS / caméra RTS native. |
+| **F** | Basculer TPS du héros / caméra RTS native pour commander les troupes. |
+| **G** | Parler à un habitant proche en TPS, puis choisir une réponse. |
 | **E** | Dégainer ou ranger la grande épée sur le dos. |
 | **X**, **Maj+X** | Coup léger, ou coup lourd plus coûteux. Trois frappes légères en rythme forment un petit enchaînement. |
 | **V maintenu** | Garde frontale ; la parade est plus efficace juste après la mise en garde. |
 | **B** | Esquive directionnelle (repli en l’absence de touche de direction). |
 
 L’interface déplace les instructions en haut à droite et affiche l’endurance/l’état de l’épée. **La simulation** valide la propriété du héros, les cooldowns, la portée, la cible, le cône de garde, la résistance, l’endurance et les dégâts ; les ordres du client ne peuvent ni choisir arbitrairement les dégâts ni téléporter le héros. L’esquive emploie le pathfinding et les collisions natives. Les coups reposent sur les animations à deux mains existantes de 0 A.D.
+
+## Deux villages et une quête à conséquences
+
+Sur **Arcadie** et sur la carte **`astreval_village`**, parlez à l’ancienne (G) : défendez les maisons contre trois pillards, laissez les gardes protéger les abords et les éclaireurs reconnaître le village rival. Les ordres RTS manuels priment 35 secondes sur les routines. Aider les habitantes accroît votre réputation ; un rapport du guide ouvre la rencontre avec le chef rival, puis le choix entre duel 1v1 et trêve (réputation 4). L’étoile sous le héros est la surbrillance native 0 A.D. : cachée en TPS, visible en RTS.
+
+Les **deux cartes ont chargé dans Pyrogenesis** sous Xvfb/llvmpipe en 1280×720 ; dialogue et premier choix constatés sur les deux, raid repoussé et progression jusqu’au rapport observés sur la nouvelle carte. Deux tests Node vérifient aussi les branches de duel et trêve ; **le duel complet n’a pas encore été joué de bout en bout dans le moteur, ni la sauvegarde/reprise de la quête**. Voir les [captures du village](screenshots/astreval-village-report.png) et le [détail technique](docs/ASTREVAL_VILLAGE_RTS_QUESTS.md).
 
 ## Ce qui est réellement HD — et ses limites
 

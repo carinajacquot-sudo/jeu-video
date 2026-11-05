@@ -1,0 +1,1690 @@
+diff --git a/binaries/data/config/default.cfg b/binaries/data/config/default.cfg
+index 5cc05123..e32678b0 100644
+--- a/binaries/data/config/default.cfg
++++ b/binaries/data/config/default.cfg
+@@ -242,7 +242,8 @@ back = S                  ; Move backward relative to the facing direction
+ left = A, Q               ; Move left (QWERTY/AZERTY)
+ right = D                 ; Move right
+ run = Shift               ; Sprint with the unit's native Run animation
+-select = F4               ; Select a hero, or the first available infantry
++select = F4               ; Select the Astreval hero and enter third-person
++dialogue = G                ; Speak to the closest villager in third-person
+ equip = E                 ; Take the Astreval sword from its back socket / sheathe it
+ attack = X                ; Strike the nearest visible enemy in front; Shift+X = heavy
+ guard = V                 ; Hold to block from the front; brief parry on press
+@@ -250,7 +251,7 @@ dodge = B                 ; Pathfinder-based sidestep (direction keys or backwar
+ 
+ [hotkey.camera]
+ reset = "R"                                   ; Reset camera rotation to default.
+-follow = "F"                                  ; Toggle third-person view for the selected unit
++follow = "F"                                  ; Toggle between hero third-person and native RTS
+ rallypointfocus = ""                          ; Focus the camera on the rally point of the selected building
+ lastattackfocus = "Space"                     ; Focus the camera on the last notified attack
+ zoom.in = Plus, NumPlus                       ; Zoom camera in (continuous control)
+diff --git a/binaries/data/mods/public/gui/session/astreval_village_ui.js b/binaries/data/mods/public/gui/session/astreval_village_ui.js
+new file mode 100644
+index 00000000..e576184f
+--- /dev/null
++++ b/binaries/data/mods/public/gui/session/astreval_village_ui.js
+@@ -0,0 +1,71 @@
++/* View-only client for the deterministic village story. No quest logic in GUI. */
++class AstrevalVillageUI
++{
++	constructor()
++	{
++		this.view = null;
++		this.dialogueActive = false;
++	}
++
++	update()
++	{
++		const hero = g_CharacterController.getControlledCharacter()?.entity || 0;
++		this.view = Engine.GuiInterfaceCall("GetAstrevalVillageState", { "hero": hero });
++		const journal = Engine.GetGUIObjectByName("astrevalQuestJournal");
++		const prompt = Engine.GetGUIObjectByName("astrevalTalkPrompt");
++		const panel = Engine.GetGUIObjectByName("astrevalDialoguePanel");
++		journal.hidden = !this.view;
++		prompt.hidden = true;
++		panel.hidden = true;
++		this.dialogueActive = false;
++		if (!this.view)
++			return;
++		Engine.GetGUIObjectByName("astrevalQuestCaption").caption =
++			"ASTREVAL  |  Réputation : " + this.view.reputation + "\n" + this.view.quest;
++		if (!hero)
++			return;
++		if (this.view.dialogue)
++		{
++			const dialogue = this.view.dialogue;
++			panel.hidden = false;
++			this.dialogueActive = true;
++			Engine.GetGUIObjectByName("astrevalDialogueText").caption =
++				dialogue.speaker + "\n" + dialogue.text;
++			for (let i = 0; i < 3; ++i)
++			{
++				const button = Engine.GetGUIObjectByName("astrevalChoice" + i);
++				button.hidden = !dialogue.choices[i];
++				if (dialogue.choices[i])
++					button.caption = dialogue.choices[i];
++			}
++		}
++		else if (this.view.nearby)
++		{
++			prompt.hidden = false;
++			prompt.caption = "G  •  Parler à " + this.view.nearby;
++		}
++	}
++
++	interact()
++	{
++		if (this.dialogueActive)
++		{
++			this.choose(-1);
++			return;
++		}
++		const hero = g_CharacterController.getControlledCharacter()?.entity;
++		if (!hero || !this.view?.nearby || g_Disconnected || Engine.IsPaused())
++			return;
++		g_CharacterController.stop();
++		Engine.PostNetworkCommand({ "type": "astreval-interact", "entities": [hero] });
++	}
++
++	choose(choice)
++	{
++		const hero = g_CharacterController.getControlledCharacter()?.entity;
++		if (!hero || !this.dialogueActive || g_Disconnected || Engine.IsPaused() ||
++		    !Number.isInteger(choice) || choice < -1 || choice > 2)
++			return;
++		Engine.PostNetworkCommand({ "type": "astreval-choice", "entities": [hero], "choice": choice });
++	}
++}
+diff --git a/binaries/data/mods/public/gui/session/character_controller.js b/binaries/data/mods/public/gui/session/character_controller.js
+index a80887d6..218327f4 100644
+--- a/binaries/data/mods/public/gui/session/character_controller.js
++++ b/binaries/data/mods/public/gui/session/character_controller.js
+@@ -23,7 +23,7 @@ class CharacterController
+ 	combat(action, data = {})
+ 	{
+ 		const character = this.getControlledCharacter();
+-		if (!character?.state.astrevalCombat || g_Disconnected || Engine.IsPaused())
++		if (!character?.state.astrevalCombat || g_AstrevalVillageUI?.dialogueActive || g_Disconnected || Engine.IsPaused())
+ 			return false;
+ 		if (action == "swing" || action == "dodge")
+ 		{
+@@ -91,7 +91,7 @@ class CharacterController
+ 		const entity = g_Selection.getFirstSelected();
+ 		const state = entity && GetEntityState(entity);
+ 		if (!state || !state.position || !state.unitAI || !state.identity ||
+-		    !state.identity.controllable || !hasClass(state, "Unit") ||
++		    !state.identity.controllable || !hasClass(state, "AstrevalHero") ||
+ 		    !Number.isFinite(state.rotationY) || !controlsPlayer(state.player))
+ 			return null;
+ 
+@@ -106,11 +106,11 @@ class CharacterController
+ 			return;
+ 		if (!combat)
+ 		{
+-			hint.caption = translate("PERSONNAGE | ZQSD/WASD déplacer | Maj courir | F RTS | F4 héros");
++			hint.caption = translate("HÉROS | ZQSD/WASD déplacer | Maj courir | G parler | F RTS | F4 héros");
+ 			return;
+ 		}
+ 		hint.caption = sprintf(
+-			translate("ASTREVAL | %(weapon)s | ENDURANCE %(energy)s/100%(combo)s\nE épée • X frappe • Maj+X lourde • V garde • B esquive\nZQSD/WASD avancer • Maj courir • F RTS • F4 héros"),
++			translate("ASTREVAL | %(weapon)s | ENDURANCE %(energy)s/100%(combo)s\nE épée • X frappe • Maj+X lourde • V garde • B esquive • G parler\nZQSD/WASD avancer • Maj courir • F RTS • F4 héros"),
+ 			{ "weapon": combat.drawn ? translate("ÉPÉE EN MAIN") : translate("ÉPÉE AU DOS"),
+ 			  "energy": combat.stamina,
+ 			  "combo": combat.combo > 1 ? sprintf(translate(" | COMBO %(hits)s"), { "hits": combat.combo }) : "" });
+@@ -157,7 +157,7 @@ class CharacterController
+ 		if (Engine.GetFollowedEntity() != this.entity)
+ 			Engine.CameraFollowThirdPerson(this.entity);
+ 
+-		if (Engine.IsPaused() || GetSimState().cinemaPlaying)
++		if (g_AstrevalVillageUI?.dialogueActive || Engine.IsPaused() || GetSimState().cinemaPlaying)
+ 		{
+ 			if (this.guardHeld)
+ 				this.guard(false);
+@@ -233,7 +233,7 @@ class CharacterController
+ 	}
+ }
+ 
+-/** Select an owned hero, or an infantry unit if the map has no hero yet. */
++/** Select only the owned Astreval hero. Infantry stays under native RTS control. */
+ function selectCharacter()
+ {
+ 	if (Engine.GetPlayerID() < 0)
+@@ -244,8 +244,7 @@ function selectCharacter()
+ 		.map(entity => ({ "entity": entity, "state": GetEntityState(entity) }))
+ 		.filter(({ state }) => state && state.position && state.unitAI && state.identity &&
+ 			state.identity.controllable && hasClass(state, "Unit") && controlsPlayer(state.player));
+-	const character = candidates.find(({ state }) => hasClass(state, "Hero")) ||
+-		candidates.find(({ state }) => hasClass(state, "Infantry")) || candidates[0];
++	const character = candidates.find(({ state }) => hasClass(state, "AstrevalHero"));
+ 	if (!character)
+ 		return;
+ 
+diff --git a/binaries/data/mods/public/gui/session/hotkeys/character.xml b/binaries/data/mods/public/gui/session/hotkeys/character.xml
+index 6b83b75b..05010823 100644
+--- a/binaries/data/mods/public/gui/session/hotkeys/character.xml
++++ b/binaries/data/mods/public/gui/session/hotkeys/character.xml
+@@ -24,6 +24,9 @@
+ 	<object hotkey="character.select">
+ 		<action on="Press">selectCharacter();</action>
+ 	</object>
++	<object hotkey="character.dialogue">
++		<action on="Press">g_AstrevalVillageUI.interact();</action>
++	</object>
+ 	<object hotkey="character.equip">
+ 		<action on="Press">g_CharacterController.equip();</action>
+ 	</object>
+diff --git a/binaries/data/mods/public/gui/session/selection.js b/binaries/data/mods/public/gui/session/selection.js
+index ee4818ba..71e6f2f0 100644
+--- a/binaries/data/mods/public/gui/session/selection.js
++++ b/binaries/data/mods/public/gui/session/selection.js
+@@ -8,8 +8,25 @@ var g_HighlightedAlpha = 0.75;
+ 
+ function _setHighlight(ents, alpha, selected)
+ {
+-	if (ents.length)
+-		Engine.GuiInterfaceCall("SetSelectionHighlight", { "entities": ents, "alpha": alpha, "selected": selected });
++	if (!ents.length)
++		return;
++	const hero = [];
++	const others = [];
++	for (const ent of ents)
++	{
++		const state = GetEntityState(ent);
++		(state && state.player == Engine.GetPlayerID() && hasClass(state, "AstrevalHero") ? hero : others).push(ent);
++	}
++	if (others.length)
++		Engine.GuiInterfaceCall("SetSelectionHighlight", { "entities": others, "alpha": alpha, "selected": selected });
++	if (hero.length)
++		// The star remains visible in RTS even if another unit is selected,
++		// but is not drawn in TPS. This does not deselect the hero or disable RTS.
++		Engine.GuiInterfaceCall("SetSelectionHighlight", {
++			"entities": hero, "alpha": g_ThirdPersonCameraEnabled ? 0 :
++				selected ? Math.max(alpha, 0.75) : 0.65,
++			"selected": !g_ThirdPersonCameraEnabled
++		});
+ }
+ 
+ function _setStatusBars(ents, enabled)
+diff --git a/binaries/data/mods/public/gui/session/session.js b/binaries/data/mods/public/gui/session/session.js
+index ad41e79e..57f9448b 100644
+--- a/binaries/data/mods/public/gui/session/session.js
++++ b/binaries/data/mods/public/gui/session/session.js
+@@ -13,6 +13,7 @@ var g_Ambient;
+ var g_AutoFormation;
+ var g_Chat;
+ var g_CharacterController;
++var g_AstrevalVillageUI;
+ var g_Cheats;
+ var g_DeveloperOverlay;
+ var g_DiplomacyColors;
+@@ -290,6 +291,7 @@ function init(initData, hotloadData)
+ 	g_AutoFormation = new AutoFormation();
+ 	g_Chat = new Chat(g_PlayerViewControl, g_Cheats);
+ 	g_CharacterController = new CharacterController();
++	g_AstrevalVillageUI = new AstrevalVillageUI();
+ 	registerEntitySelectionChangeHandler(() => g_CharacterController.onSelectionChanged());
+ 	g_DeveloperOverlay = new DeveloperOverlay(g_PlayerViewControl, g_Selection);
+ 	g_DiplomacyDialog = new DiplomacyDialog(g_PlayerViewControl, g_DiplomacyColors);
+@@ -676,6 +678,7 @@ function onSimulationUpdate()
+ 		return;
+ 
+ 	GetMultipleEntityStates(g_Selection.toList());
++	g_AstrevalVillageUI.update();
+ 
+ 	for (let handler of g_SimulationUpdateHandlers)
+ 		handler();
+diff --git a/binaries/data/mods/public/gui/session/session.xml b/binaries/data/mods/public/gui/session/session.xml
+index 5e6c05f7..c55541a3 100644
+--- a/binaries/data/mods/public/gui/session/session.xml
++++ b/binaries/data/mods/public/gui/session/session.xml
+@@ -39,6 +39,32 @@
+ 		size="100%-575 48 100%-10 114"
+ 		style="largeCenteredOutlinedText" ghost="true" hidden="true" z="100"/>
+ 
++	<!-- The quest journal is available in RTS; dialogue and G prompt only in TPS. -->
++	<object name="astrevalQuestJournal" type="image" sprite="supplementalDetailsPanel"
++		size="16 55 468 138" hidden="true" ghost="true" z="101">
++		<object name="astrevalQuestCaption" type="text" style="largeCenteredOutlinedText"
++			size="10 7 100%-10 100%-6" ghost="true"/>
++	</object>
++	<object name="astrevalTalkPrompt" type="text" style="largeCenteredOutlinedText"
++		size="50%-260 100%-262 50%+260 100%-221" hidden="true" ghost="true" z="103"/>
++	<object name="astrevalDialoguePanel" type="image" sprite="supplementalDetailsPanel"
++		size="50%-300 100%-510 50%+300 100%-227" hidden="true" z="103">
++		<object name="astrevalDialogueText" type="text" style="largeCenteredOutlinedText"
++			size="18 12 100%-18 132" ghost="true"/>
++		<object name="astrevalChoice0" type="button" style="StoneButton"
++			size="17 146 100%-17 181" hidden="true">
++			<action on="Press">g_AstrevalVillageUI.choose(0);</action>
++		</object>
++		<object name="astrevalChoice1" type="button" style="StoneButton"
++			size="17 187 100%-17 222" hidden="true">
++			<action on="Press">g_AstrevalVillageUI.choose(1);</action>
++		</object>
++		<object name="astrevalChoice2" type="button" style="StoneButton"
++			size="17 228 100%-17 263" hidden="true">
++			<action on="Press">g_AstrevalVillageUI.choose(2);</action>
++		</object>
++	</object>
++
+ 	<!-- Hotkeys won't work properly unless outside menu -->
+ 	<include directory="gui/session/hotkeys/"/>
+ 
+diff --git a/binaries/data/mods/public/gui/session/third_person_camera.js b/binaries/data/mods/public/gui/session/third_person_camera.js
+index fced7528..47046822 100644
+--- a/binaries/data/mods/public/gui/session/third_person_camera.js
++++ b/binaries/data/mods/public/gui/session/third_person_camera.js
+@@ -1,27 +1,60 @@
+-/** Third-person mode for the first selected unit. RTS mode remains available with F. */
++/** Third-person follow belongs exclusively to the Astreval hero. F returns to
++ * the original RTS camera and retains all native troop selection and orders. */
+ var g_ThirdPersonCameraEnabled = true;
+ 
++function refreshAstrevalHeroMarker()
++{
++	if (Engine.GetPlayerID() < 0)
++		return;
++	const hero = (Engine.GuiInterfaceCall("GetPlayerEntities") || []).find(ent => {
++		const state = GetEntityState(ent);
++		return state && hasClass(state, "AstrevalHero");
++	});
++	if (hero)
++		_setHighlight([hero], g_ThirdPersonCameraEnabled ? 0 : 0.65,
++			!g_ThirdPersonCameraEnabled);
++}
++
+ function updateThirdPersonCamera()
+ {
+ 	if (!g_ThirdPersonCameraEnabled)
+ 		return;
+-
+-	let unit = g_Selection.getFirstSelected();
+-	let state = unit && GetEntityState(unit);
+-	if (state && hasClass(state, "Unit"))
++	const unit = g_Selection.getFirstSelected();
++	const state = unit && GetEntityState(unit);
++	if (state && state.player == Engine.GetPlayerID() && hasClass(state, "AstrevalHero"))
+ 		Engine.CameraFollowThirdPerson(unit);
+ 	else
++	{
++		// Selecting soldiers returns to native RTS instead of following them.
++		if (state && hasClass(state, "Unit"))
++		{
++			g_ThirdPersonCameraEnabled = false;
++			g_CharacterController?.stop();
++		}
+ 		Engine.CameraFollowThirdPerson(0);
++	}
++	refreshAstrevalHeroMarker();
+ }
+ 
+ function toggleThirdPersonCamera()
+ {
+-	g_ThirdPersonCameraEnabled = !g_ThirdPersonCameraEnabled;
+-	if (g_ThirdPersonCameraEnabled)
++	if (!g_ThirdPersonCameraEnabled)
++	{
++		const selected = g_Selection.getFirstSelected();
++		const state = selected && GetEntityState(selected);
++		if (!state || !hasClass(state, "AstrevalHero"))
++		{
++			selectCharacter();
++			return;
++		}
++		g_ThirdPersonCameraEnabled = true;
+ 		updateThirdPersonCamera();
++	}
+ 	else
+ 	{
++		g_ThirdPersonCameraEnabled = false;
+ 		g_CharacterController.stop();
+ 		Engine.CameraFollowThirdPerson(0);
++		refreshAstrevalHeroMarker();
+ 	}
+ }
+diff --git a/binaries/data/mods/public/maps/scenarios/astreval_arcadia.xml b/binaries/data/mods/public/maps/scenarios/astreval_arcadia.xml
+index 934fff41..25616352 100644
+--- a/binaries/data/mods/public/maps/scenarios/astreval_arcadia.xml
++++ b/binaries/data/mods/public/maps/scenarios/astreval_arcadia.xml
+@@ -38,10 +38,10 @@
+ 	<ScriptSettings><![CDATA[
+ {
+   "CircularMap": false,
+-  "Description": "Le gardien humain d’Astreval traverse Arcadie avec une cape noire et une grande épée dans le dos. F4 : héros ; ZQSD/WASD : avancer ; Maj : courir ; F : RTS ; E : épée ; X/Maj+X : frapper ; V : parer ; B : esquiver.",
++  "Description": "Deux villages dans le véritable 0 A.D. : F4 héros, F TPS/RTS, G parler aux habitants, quêtes à conséquences, défense autonome, éclaireurs, aventuriers et duel 1 contre 1.",
+   "Keywords": [],
+   "LockTeams": false,
+-  "Name": "Astreval — Gardien noir d’Arcadie",
++  "Name": "Astreval — Arcadie et les deux villages",
+   "PlayerData": [
+     {
+       "Civ": "spart",
+@@ -62,15 +62,28 @@
+       },
+       "Name": "Player 2",
+       "Team": -1
++    },
++    {
++      "Civ": "spart",
++      "AI": "",
++      "Name": "Chef rival",
++      "Team": -1,
++      "Color": {
++        "r": 190,
++        "g": 152,
++        "b": 65
++      }
+     }
+   ],
+   "Preview": "arcadia.png",
+   "RevealMap": false,
+-  "VictoryConditions": [
+-    "conquest"
++  "VictoryConditions": [],
++  "TriggerScripts": [
++    "scripts/TriggerHelper.js",
++    "scripts/astreval_village.js"
+   ]
+ }
+-]]></ScriptSettings>
++  ]]></ScriptSettings>
+ 	<Entities>
+ 		<Entity uid="150">
+ 			<Template>actor|props/flora/grass_soft_dry_small.xml</Template>
+@@ -22569,6 +22582,21 @@
+ 			<Orientation y="2.35621"/>
+ 			<Actor seed="57392"/>
+ 		</Entity>
+-	</Entities>
++
++    <!-- ASTREVAL VILLAGE BEGIN -->
++    <Entity uid="4780"><Template>units/athen/astreval_elder</Template><Player>1</Player><Position x="671" z="603"/><Orientation y="3.5"/></Entity>
++    <Entity uid="4781"><Template>units/athen/astreval_guide</Template><Player>1</Player><Position x="663" z="613"/><Orientation y="2.8"/></Entity>
++    <Entity uid="4782"><Template>units/athen/astreval_villager</Template><Player>1</Player><Position x="681" z="612"/><Orientation y="2.8"/></Entity>
++    <Entity uid="4783"><Template>units/athen/astreval_villager</Template><Player>1</Player><Position x="658" z="593"/><Orientation y="2.8"/></Entity>
++    <Entity uid="4784"><Template>units/athen/astreval_villager</Template><Player>1</Player><Position x="677" z="596"/><Orientation y="2.8"/></Entity>
++    <Entity uid="4785"><Template>units/athen/astreval_defender</Template><Player>1</Player><Position x="650" z="600"/><Orientation y="2.8"/></Entity>
++    <Entity uid="4786"><Template>units/athen/astreval_defender</Template><Player>1</Player><Position x="653" z="615"/><Orientation y="2.8"/></Entity>
++    <Entity uid="4787"><Template>units/athen/astreval_defender</Template><Player>1</Player><Position x="641" z="603"/><Orientation y="2.8"/></Entity>
++    <Entity uid="4788"><Template>units/athen/astreval_scout</Template><Player>1</Player><Position x="655" z="587"/><Orientation y="2.8"/></Entity>
++    <Entity uid="4789"><Template>units/athen/astreval_scout</Template><Player>1</Player><Position x="649" z="613"/><Orientation y="2.8"/></Entity>
++    <Entity uid="4790"><Template>units/spart/astreval_adventurer</Template><Player>1</Player><Position x="648" z="607"/><Orientation y="2.8"/></Entity>
++    <Entity uid="4791"><Template>units/spart/astreval_rival_chief</Template><Player>3</Player><Position x="134" z="135"/><Orientation y="1.4"/></Entity>
++    <!-- ASTREVAL VILLAGE END -->
++  </Entities>
+ 	<Paths/>
+ </Scenario>
+diff --git a/binaries/data/mods/public/maps/scenarios/astreval_village.xml b/binaries/data/mods/public/maps/scenarios/astreval_village.xml
+new file mode 100644
+index 00000000..13825a7a
+--- /dev/null
++++ b/binaries/data/mods/public/maps/scenarios/astreval_village.xml
+@@ -0,0 +1,177 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<Scenario version="7">
++  <Terrain patches="12" texture="astreval_leafy_grass" priority="0" height="16384"/>
++  <Environment>
++    <SkySet>sunrise</SkySet>
++    <SunColor r="1.05" g="0.88" b="0.71"/>
++    <SunElevation angle="0.55"/>
++    <SunRotation angle="-0.785396"/>
++    <AmbientColor r="0.34" g="0.38" b="0.46"/>
++    <!-- Soft distant haze for the meadow scene. -->
++    <Fog><FogFactor>0.003</FogFactor><FogThickness>0.002</FogThickness>
++      <FogColor r="0.69" g="0.74" b="0.79"/></Fog>
++    <Water><WaterBody><Type>ocean</Type><Height>5</Height></WaterBody></Water>
++    <Postproc><Brightness>0</Brightness><Contrast>1.05</Contrast><Saturation>1.05</Saturation><Bloom>0.11</Bloom><PostEffect>hdr</PostEffect></Postproc>
++  </Environment>
++  <Camera>
++    <Position x="351" y="75" z="286"/>
++    <Rotation angle="0"/>
++    <Declination angle="0.610865"/>
++  </Camera>
++  <ScriptSettings><![CDATA[
++{
++  "Name": "Astreval — village vivant et duel du chef rival",
++  "Description": "Visiter deux villages : F4 héros, F TPS/RTS, G discuter et accepter des quêtes. Gardes et éclaireurs autonomes, aventures et duel héroïque à choix.",
++  "Keywords": [
++    "demo",
++    "village",
++    "quest",
++    "combat"
++  ],
++  "PlayerData": [
++    null,
++    {
++      "Civ": "athen",
++      "Name": "Astreval",
++      "Team": -1,
++      "Color": {
++        "r": 51,
++        "g": 114,
++        "b": 215
++      }
++    },
++    {
++      "Civ": "gaul",
++      "AI": "",
++      "Name": "Village rival",
++      "Team": -1,
++      "Color": {
++        "r": 165,
++        "g": 57,
++        "b": 45
++      }
++    },
++    {
++      "Civ": "spart",
++      "AI": "",
++      "Name": "Chef rival",
++      "Team": -1,
++      "Color": {
++        "r": 186,
++        "g": 153,
++        "b": 71
++      }
++    }
++  ],
++  "RevealMap": false,
++  "VictoryConditions": [],
++  "TriggerScripts": [
++    "scripts/TriggerHelper.js",
++    "scripts/astreval_village.js"
++  ]
++}
++  ]]></ScriptSettings>
++  <Entities>
++    <Entity uid="9000"><Template>structures/athen/civil_centre</Template><Player>1</Player><Position x="352" z="362"/><Orientation y="0"/></Entity>
++    <Entity uid="9001"><Template>structures/athen/house</Template><Player>1</Player><Position x="291" z="344"/><Orientation y="0"/></Entity>
++    <Entity uid="9002"><Template>structures/athen/house</Template><Player>1</Player><Position x="302" z="388"/><Orientation y="0"/></Entity>
++    <Entity uid="9003"><Template>structures/athen/house</Template><Player>1</Player><Position x="390" z="360"/><Orientation y="0"/></Entity>
++    <Entity uid="9004"><Template>structures/athen/house</Template><Player>1</Player><Position x="406" z="390"/><Orientation y="0"/></Entity>
++    <Entity uid="9005"><Template>structures/athen/storehouse</Template><Player>1</Player><Position x="340" z="410"/><Orientation y="0"/></Entity>
++    <Entity uid="9006"><Template>structures/gaul/civil_centre</Template><Player>2</Player><Position x="535" z="478"/><Orientation y="0"/></Entity>
++    <Entity uid="9007"><Template>structures/gaul/house</Template><Player>2</Player><Position x="490" z="491"/><Orientation y="0"/></Entity>
++    <Entity uid="9008"><Template>structures/gaul/house</Template><Player>2</Player><Position x="580" z="487"/><Orientation y="0"/></Entity>
++    <Entity uid="9009"><Template>structures/gaul/house</Template><Player>2</Player><Position x="572" z="531"/><Orientation y="0"/></Entity>
++    <Entity uid="9010"><Template>structures/gaul/house</Template><Player>2</Player><Position x="505" z="538"/><Orientation y="0"/></Entity>
++    <Entity uid="9011"><Template>units/athen/hero_astreval</Template><Player>1</Player><Position x="354" z="306"/><Orientation y="0"/></Entity>
++    <Entity uid="9012"><Template>units/athen/astreval_elder</Template><Player>1</Player><Position x="359" z="312"/><Orientation y="3.14"/></Entity>
++    <Entity uid="9013"><Template>units/athen/astreval_guide</Template><Player>1</Player><Position x="346" z="312"/><Orientation y="1.8"/></Entity>
++    <Entity uid="9014"><Template>units/athen/astreval_villager</Template><Player>1</Player><Position x="364" z="323"/><Orientation y="2.2"/></Entity>
++    <Entity uid="9015"><Template>units/athen/astreval_villager</Template><Player>1</Player><Position x="332" z="314"/><Orientation y="1"/></Entity>
++    <Entity uid="9016"><Template>units/athen/astreval_villager</Template><Player>1</Player><Position x="374" z="327"/><Orientation y="2.2"/></Entity>
++    <Entity uid="9017"><Template>units/athen/astreval_defender</Template><Player>1</Player><Position x="313" z="313"/><Orientation y="1.2"/></Entity>
++    <Entity uid="9018"><Template>units/athen/astreval_defender</Template><Player>1</Player><Position x="319" z="330"/><Orientation y="1.2"/></Entity>
++    <Entity uid="9019"><Template>units/athen/astreval_defender</Template><Player>1</Player><Position x="391" z="311"/><Orientation y="1.2"/></Entity>
++    <Entity uid="9020"><Template>units/athen/astreval_defender</Template><Player>1</Player><Position x="405" z="335"/><Orientation y="1.2"/></Entity>
++    <Entity uid="9021"><Template>units/athen/astreval_scout</Template><Player>1</Player><Position x="376" z="308"/><Orientation y="1.2"/></Entity>
++    <Entity uid="9022"><Template>units/athen/astreval_scout</Template><Player>1</Player><Position x="386" z="301"/><Orientation y="1.2"/></Entity>
++    <Entity uid="9023"><Template>units/spart/astreval_adventurer</Template><Player>1</Player><Position x="340" z="296"/><Orientation y="1.2"/></Entity>
++    <Entity uid="9024"><Template>units/spart/astreval_adventurer</Template><Player>1</Player><Position x="326" z="297"/><Orientation y="1.2"/></Entity>
++    <Entity uid="9025"><Template>units/spart/astreval_rival_chief</Template><Player>3</Player><Position x="518" z="431"/><Orientation y="3.8"/></Entity>
++    <Entity uid="9026"><Template>units/gaul/infantry_spearman_b</Template><Player>2</Player><Position x="552" z="444"/><Orientation y="3.14"/></Entity>
++    <Entity uid="9027"><Template>units/gaul/infantry_spearman_b</Template><Player>2</Player><Position x="557" z="450"/><Orientation y="3.14"/></Entity>
++    <Entity uid="9028"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="161" z="272"/><Orientation y="0.0"/></Entity>
++    <Entity uid="9029"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="567" z="272"/><Orientation y="0.72"/></Entity>
++    <Entity uid="9030"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="611" z="267"/><Orientation y="1.44"/></Entity>
++    <Entity uid="9031"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="508" z="582"/><Orientation y="2.16"/></Entity>
++    <Entity uid="9032"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="200" z="506"/><Orientation y="2.52"/></Entity>
++    <Entity uid="9033"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="641" z="465"/><Orientation y="2.88"/></Entity>
++    <Entity uid="9034"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="448" z="529"/><Orientation y="0.36"/></Entity>
++    <Entity uid="9035"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="588" z="305"/><Orientation y="1.08"/></Entity>
++    <Entity uid="9036"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="258" z="189"/><Orientation y="1.44"/></Entity>
++    <Entity uid="9037"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="386" z="626"/><Orientation y="1.7999999999999998"/></Entity>
++    <Entity uid="9038"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="189" z="221"/><Orientation y="2.16"/></Entity>
++    <Entity uid="9039"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="155" z="485"/><Orientation y="2.88"/></Entity>
++    <Entity uid="9040"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="139" z="263"/><Orientation y="0.36"/></Entity>
++    <Entity uid="9041"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="638" z="352"/><Orientation y="1.08"/></Entity>
++    <Entity uid="9042"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="128" z="489"/><Orientation y="1.7999999999999998"/></Entity>
++    <Entity uid="9043"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="410" z="578"/><Orientation y="2.16"/></Entity>
++    <Entity uid="9044"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="170" z="496"/><Orientation y="2.88"/></Entity>
++    <Entity uid="9045"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="492" z="309"/><Orientation y="0.0"/></Entity>
++    <Entity uid="9046"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="420" z="232"/><Orientation y="0.72"/></Entity>
++    <Entity uid="9047"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="131" z="370"/><Orientation y="1.08"/></Entity>
++    <Entity uid="9048"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="329" z="594"/><Orientation y="1.44"/></Entity>
++    <Entity uid="9049"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="443" z="196"/><Orientation y="1.7999999999999998"/></Entity>
++    <Entity uid="9050"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="408" z="554"/><Orientation y="2.16"/></Entity>
++    <Entity uid="9051"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="128" z="504"/><Orientation y="2.52"/></Entity>
++    <Entity uid="9052"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="141" z="365"/><Orientation y="2.88"/></Entity>
++    <Entity uid="9053"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="622" z="396"/><Orientation y="0.0"/></Entity>
++    <Entity uid="9054"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="637" z="357"/><Orientation y="0.36"/></Entity>
++    <Entity uid="9055"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="194" z="557"/><Orientation y="0.72"/></Entity>
++    <Entity uid="9056"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="272" z="162"/><Orientation y="1.08"/></Entity>
++    <Entity uid="9057"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="145" z="624"/><Orientation y="1.44"/></Entity>
++    <Entity uid="9058"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="529" z="374"/><Orientation y="1.7999999999999998"/></Entity>
++    <Entity uid="9059"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="193" z="280"/><Orientation y="2.16"/></Entity>
++    <Entity uid="9060"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="156" z="433"/><Orientation y="2.52"/></Entity>
++    <Entity uid="9061"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="200" z="170"/><Orientation y="0.0"/></Entity>
++    <Entity uid="9062"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="432" z="502"/><Orientation y="0.36"/></Entity>
++    <Entity uid="9063"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="496" z="312"/><Orientation y="0.72"/></Entity>
++    <Entity uid="9064"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="631" z="348"/><Orientation y="1.08"/></Entity>
++    <Entity uid="9065"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="635" z="269"/><Orientation y="1.7999999999999998"/></Entity>
++    <Entity uid="9066"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="165" z="265"/><Orientation y="2.52"/></Entity>
++    <Entity uid="9067"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="360" z="170"/><Orientation y="0.0"/></Entity>
++    <Entity uid="9068"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="337" z="538"/><Orientation y="0.36"/></Entity>
++    <Entity uid="9069"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="454" z="269"/><Orientation y="1.08"/></Entity>
++    <Entity uid="9070"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="273" z="469"/><Orientation y="1.7999999999999998"/></Entity>
++    <Entity uid="9071"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="541" z="597"/><Orientation y="2.16"/></Entity>
++    <Entity uid="9072"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="638" z="322"/><Orientation y="2.52"/></Entity>
++    <Entity uid="9073"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="576" z="198"/><Orientation y="2.88"/></Entity>
++    <Entity uid="9074"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="366" z="532"/><Orientation y="0.0"/></Entity>
++    <Entity uid="9075"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="643" z="296"/><Orientation y="0.36"/></Entity>
++    <Entity uid="9076"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="497" z="334"/><Orientation y="1.44"/></Entity>
++    <Entity uid="9077"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="496" z="360"/><Orientation y="2.16"/></Entity>
++    <Entity uid="9078"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="200" z="174"/><Orientation y="2.52"/></Entity>
++    <Entity uid="9079"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="635" z="350"/><Orientation y="2.88"/></Entity>
++    <Entity uid="9080"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="346" z="547"/><Orientation y="0.0"/></Entity>
++    <Entity uid="9081"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="554" z="337"/><Orientation y="0.36"/></Entity>
++    <Entity uid="9082"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="422" z="536"/><Orientation y="0.72"/></Entity>
++    <Entity uid="9083"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="219" z="434"/><Orientation y="1.44"/></Entity>
++    <Entity uid="9084"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="595" z="175"/><Orientation y="1.7999999999999998"/></Entity>
++    <Entity uid="9085"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="254" z="520"/><Orientation y="2.16"/></Entity>
++    <Entity uid="9086"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="481" z="572"/><Orientation y="2.52"/></Entity>
++    <Entity uid="9087"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="620" z="528"/><Orientation y="0.0"/></Entity>
++    <Entity uid="9088"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="588" z="176"/><Orientation y="0.36"/></Entity>
++    <Entity uid="9089"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="562" z="582"/><Orientation y="0.72"/></Entity>
++    <Entity uid="9090"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="246" z="630"/><Orientation y="1.08"/></Entity>
++    <Entity uid="9091"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="563" z="627"/><Orientation y="1.44"/></Entity>
++    <Entity uid="9092"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="245" z="574"/><Orientation y="2.16"/></Entity>
++    <Entity uid="9093"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="116" z="396"/><Orientation y="2.52"/></Entity>
++    <Entity uid="9094"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="497" z="343"/><Orientation y="0.0"/></Entity>
++    <Entity uid="9095"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="506" z="220"/><Orientation y="0.36"/></Entity>
++    <Entity uid="9096"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="326" z="473"/><Orientation y="1.44"/></Entity>
++    <Entity uid="9097"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="409" z="514"/><Orientation y="1.7999999999999998"/></Entity>
++    <Entity uid="9098"><Template>gaia/tree/cypress_windswept</Template><Player>0</Player><Position x="638" z="319"/><Orientation y="2.16"/></Entity>
++    <Entity uid="9099"><Template>gaia/tree/olive</Template><Player>0</Player><Position x="595" z="360"/><Orientation y="2.52"/></Entity>
++  </Entities>
++  <Paths/>
++</Scenario>
+diff --git a/binaries/data/mods/public/maps/scripts/astreval_village.js b/binaries/data/mods/public/maps/scripts/astreval_village.js
+new file mode 100644
+index 00000000..e39542f7
+--- /dev/null
++++ b/binaries/data/mods/public/maps/scripts/astreval_village.js
+@@ -0,0 +1,519 @@
++/*
++ * Astreval village story. Both scenario maps load this script. All quest state,
++ * autonomy, decisions and combat transitions live in the deterministic simulation;
++ * the GUI only displays a restricted view and submits validated commands.
++ */
++
++Trigger.prototype.AstrevalEntity = function(player, className)
++{
++	for (const ent of TriggerHelper.GetEntitiesByPlayer(player))
++		if (Engine.QueryInterface(ent, IID_Identity)?.HasClass(className))
++			return ent;
++	return 0;
++};
++
++Trigger.prototype.AstrevalPos = function(ent)
++{
++	const cmpPosition = Engine.QueryInterface(ent, IID_Position);
++	return cmpPosition?.IsInWorld() ? cmpPosition.GetPosition2D() : null;
++};
++
++Trigger.prototype.AstrevalDistance = function(a, b)
++{
++	const posA = this.AstrevalPos(a);
++	const posB = this.AstrevalPos(b);
++	return posA && posB ? Math.hypot(posA.x - posB.x, posA.y - posB.y) : Infinity;
++};
++
++Trigger.prototype.AstrevalAlive = function(ent)
++{
++	const cmpHealth = Engine.QueryInterface(ent, IID_Health);
++	return !!cmpHealth && cmpHealth.GetHitpoints() > 0 && !!this.AstrevalPos(ent);
++};
++
++Trigger.prototype.AstrevalSetDiplomacy = function(a, b, enemy)
++{
++	const cmpA = QueryPlayerIDInterface(a, IID_Diplomacy);
++	const cmpB = QueryPlayerIDInterface(b, IID_Diplomacy);
++	if (!cmpA || !cmpB)
++		return;
++	if (enemy)
++	{
++		cmpA.SetEnemy(b);
++		cmpB.SetEnemy(a);
++	}
++	else
++	{
++		cmpA.SetNeutral(b);
++		cmpB.SetNeutral(a);
++	}
++};
++
++Trigger.prototype.AstrevalInit = function()
++{
++	const hero = this.AstrevalEntity(1, "AstrevalHero");
++	const elder = this.AstrevalEntity(1, "AstrevalElder");
++	const guide = this.AstrevalEntity(1, "AstrevalGuide");
++	const chief = this.AstrevalEntity(3, "AstrevalRivalChief");
++	if (!hero || !elder || !guide || !chief)
++	{
++		warn("Astreval village: missing hero, elder, guide or rival chief");
++		return;
++	}
++
++	this.astreval = {
++		"hero": hero, "elder": elder, "guide": guide, "chief": chief,
++		"home": this.AstrevalPos(elder), "rival": this.AstrevalPos(chief),
++		"stage": "intro", "reputation": 0, "villagersHelped": {},
++		"raiders": [], "dialogue": null, "manualUntil": {},
++		"orders": {}, "roles": {}, "scoutWaypoints": {}, "scoutReached": false,
++		"defenseHelp": false, "duelStarted": false, "duelStances": {}
++	};
++
++	// Story battles are opt-in: the other village and its chief do not wage an
++	// unrelated RTS conquest war before the player has spoken with the elder.
++	this.AstrevalSetDiplomacy(1, 2, false);
++	this.AstrevalSetDiplomacy(1, 3, false);
++	this.AstrevalSetDiplomacy(2, 3, false);
++	this.RegisterTrigger("OnInterval", "AstrevalTick", { "enabled": true, "interval": 2000, "delay": 2000 });
++	this.RegisterTrigger("OnPlayerCommand", "AstrevalPlayerCommand", { "enabled": true });
++	for (const ent of TriggerHelper.GetEntitiesByPlayer(1))
++	{
++		const cmpIdentity = Engine.QueryInterface(ent, IID_Identity);
++		const cmpAI = Engine.QueryInterface(ent, IID_UnitAI);
++		if (!cmpIdentity || !cmpAI)
++			continue;
++		if (cmpIdentity.HasClass("AstrevalDefender") || cmpIdentity.HasClass("AstrevalAdventurer"))
++			cmpAI.SwitchToStance("defensive");
++		if (cmpIdentity.HasClass("AstrevalScout"))
++			cmpAI.SwitchToStance("passive");
++	}
++	// Do not auto-attack an approaching player in the rival village before the duel.
++	Engine.QueryInterface(chief, IID_UnitAI)?.SwitchToStance("passive");
++};
++
++/** Explicit RTS orders take precedence for 35 seconds; autonomous roles resume. */
++Trigger.prototype.AstrevalPlayerCommand = function(msg)
++{
++	if (!this.astreval || msg.player != 1 || !msg.cmd?.entities ||
++	    !["walk", "walk-custom", "attack", "attack-walk", "attack-walk-custom",
++	      "patrol", "guard", "stop", "stance", "formation"].includes(msg.cmd.type))
++		return;
++	const now = TriggerHelper.GetTime();
++	for (const ent of msg.cmd.entities)
++	{
++		if (TriggerHelper.GetOwner(ent) != 1)
++			continue;
++		const identity = Engine.QueryInterface(ent, IID_Identity);
++		if (identity && (identity.HasClass("AstrevalDefender") ||
++		    identity.HasClass("AstrevalScout") || identity.HasClass("AstrevalAdventurer")))
++			this.astreval.manualUntil[ent] = now + 35000;
++	}
++};
++
++Trigger.prototype.AstrevalSpawn = function(template, owner, x, z)
++{
++	const ent = Engine.AddEntity(template);
++	const cmpOwner = Engine.QueryInterface(ent, IID_Ownership);
++	const cmpPosition = Engine.QueryInterface(ent, IID_Position);
++	if (!cmpOwner || !cmpPosition)
++	{
++		Engine.DestroyEntity(ent);
++		return 0;
++	}
++	cmpOwner.SetOwner(owner);
++	cmpPosition.JumpTo(x, z);
++	return ent;
++};
++
++Trigger.prototype.AstrevalStartRaid = function()
++{
++	const s = this.astreval;
++	const dx = s.rival.x - s.home.x;
++	const dz = s.rival.y - s.home.y;
++	const length = Math.hypot(dx, dz) || 1;
++	const x = s.home.x + 86 * dx / length;
++	const z = s.home.y + 86 * dz / length;
++	this.AstrevalSetDiplomacy(1, 2, true);
++	for (let i = 0; i < 3; ++i)
++	{
++		const ent = this.AstrevalSpawn("units/gaul/infantry_spearman_b", 2,
++			x + i * 3 - 3, z + i * 4 - 4);
++		if (!ent)
++			continue;
++		s.raiders.push(ent);
++		Engine.QueryInterface(ent, IID_UnitAI)?.WalkAndFight(s.home.x, s.home.y,
++			undefined, false, false, false);
++	}
++	if (!s.raiders.length)
++		warn("Astreval village: raid could not be spawned");
++};
++
++Trigger.prototype.AstrevalScoutTick = function(ent, now)
++{
++	const s = this.astreval;
++	const pos = this.AstrevalPos(ent);
++	if (!pos)
++		return;
++	const dx = s.rival.x - s.home.x;
++	const dz = s.rival.y - s.home.y;
++	const length = Math.hypot(dx, dz) || 1;
++	const route = s.scoutReached ? [s.home] :
++		[0.30, 0.60, 0.88].map(t => ({ "x": s.home.x + dx * t, "y": s.home.y + dz * t }));
++	let waypoint = s.scoutWaypoints[ent] || 0;
++	if (!s.scoutReached && (Math.hypot(pos.x - s.rival.x, pos.y - s.rival.y) < 85 || waypoint >= route.length))
++	{
++		s.scoutReached = true;
++		s.stage = "report";
++		s.scoutWaypoints = {};
++		waypoint = 0;
++	}
++	const points = s.scoutReached ? [s.home] : route;
++	const target = points[Math.min(waypoint, points.length - 1)];
++	if (Math.hypot(pos.x - target.x, pos.y - target.y) < 11 && !s.scoutReached)
++	{
++		waypoint = Math.min(waypoint + 1, points.length);
++		s.scoutWaypoints[ent] = waypoint;
++	}
++	if (waypoint >= points.length && !s.scoutReached)
++		return;
++	const next = points[Math.min(waypoint, points.length - 1)];
++	if (Math.hypot(pos.x - next.x, pos.y - next.y) < 9)
++		return;
++	const order = s.orders[ent];
++	if (!order || order.waypoint != waypoint || now - order.time > 24000)
++	{
++		Engine.QueryInterface(ent, IID_UnitAI)?.Walk(next.x, next.y, false, false);
++		s.orders[ent] = { "waypoint": waypoint, "time": now };
++	}
++};
++
++Trigger.prototype.AstrevalEndDuel = function()
++{
++	const s = this.astreval;
++	this.AstrevalSetDiplomacy(1, 3, false);
++	Engine.QueryInterface(s.chief, IID_UnitAI)?.SwitchToStance("passive");
++	for (const ent in s.duelStances)
++	{
++		if (TriggerHelper.GetOwner(+ent) == 1)
++			Engine.QueryInterface(+ent, IID_UnitAI)?.SwitchToStance(s.duelStances[ent]);
++	}
++	s.roles = {};
++	s.duelStances = {};
++};
++
++Trigger.prototype.AstrevalTick = function()
++{
++	const s = this.astreval;
++	if (!s)
++		return;
++	const now = TriggerHelper.GetTime();
++	if (s.stage == "defense" && s.raiders.length && s.raiders.every(ent => !this.AstrevalAlive(ent)))
++	{
++		this.AstrevalSetDiplomacy(1, 2, false);
++		s.stage = "scouting";
++		s.reputation++;
++	}
++	if (s.stage == "duel")
++	{
++		if (!this.AstrevalAlive(s.hero))
++		{
++			s.stage = "defeat";
++			this.AstrevalEndDuel();
++		}
++		else if (!this.AstrevalAlive(s.chief))
++		{
++			s.stage = "peace";
++			s.reputation += 2;
++			QueryPlayerIDInterface(1, IID_Player)?.AddResource("wood", 180);
++			this.AstrevalEndDuel();
++		}
++	}
++
++	for (const ent of TriggerHelper.GetEntitiesByPlayer(1))
++	{
++		const identity = Engine.QueryInterface(ent, IID_Identity);
++		const ai = Engine.QueryInterface(ent, IID_UnitAI);
++		if (!identity || !ai)
++			continue;
++		const defender = identity.HasClass("AstrevalDefender");
++		const adventurer = identity.HasClass("AstrevalAdventurer");
++		const scout = identity.HasClass("AstrevalScout");
++		if (!defender && !adventurer && !scout)
++			continue;
++		// A player-directed scout can still discover the rival camp; explicit
++		// movement orders suppress AI routing, not quest observation.
++		if (scout && s.stage == "scouting" && this.AstrevalDistance(ent, s.chief) < 85)
++		{
++			s.scoutReached = true;
++			s.stage = "report";
++			s.scoutWaypoints = {};
++		}
++		// Preserve native player RTS orders (including stance) for 35s.
++		// The duel is the exception: every nonhero must remain passive.
++		if (s.manualUntil[ent] > now && s.stage != "duel")
++			continue;
++		const stance = s.stage == "duel" || scout ? "passive" : "defensive";
++		if (s.roles[ent] != stance)
++		{
++			ai.SwitchToStance(stance);
++			s.roles[ent] = stance;
++		}
++		if (s.manualUntil[ent] > now)
++			continue;
++		if (scout && (s.stage == "scouting" || s.stage == "report"))
++		{
++			this.AstrevalScoutTick(ent, now);
++			continue;
++		}
++		if (s.stage == "duel" && this.AstrevalDistance(ent, s.chief) < 34)
++		{
++			// Preserve a genuine hero/chief one-on-one even when the squad was
++			// previously near the rival village.
++			ai.Walk(s.home.x, s.home.y, false, false);
++			continue;
++		}
++		if (!defender && !adventurer)
++			continue;
++		const pos = this.AstrevalPos(ent);
++		if (!pos)
++			continue;
++		if (s.stage == "defense")
++		{
++			const nearby = s.raiders.filter(raider => this.AstrevalAlive(raider) &&
++				this.AstrevalDistance(ent, raider) < (adventurer ? 110 : 82));
++			if (nearby.length)
++			{
++				const target = nearby[0];
++				if (s.orders[ent]?.target != target || now - s.orders[ent].time > 12500)
++				{
++					ai.Attack(target, false, false, false);
++					s.orders[ent] = { "target": target, "time": now };
++				}
++				continue;
++			}
++		}
++		// Keep the village protected instead of following the hero across the
++		// map. Individual posts are stable and manual RTS orders have priority.
++		const postX = s.home.x + (ent % 5 - 2) * 8;
++		const postZ = s.home.y + (ent % 3 - 1) * 9;
++		if (Math.hypot(pos.x - postX, pos.y - postZ) > 26 &&
++		    (!s.orders[ent]?.post || now - s.orders[ent].time > 18000))
++		{
++			ai.Walk(postX, postZ, false, false);
++			s.orders[ent] = { "post": true, "time": now };
++		}
++	}
++};
++
++Trigger.prototype.AstrevalQuestText = function()
++{
++	const s = this.astreval;
++	if (!s)
++		return "";
++	return ({
++		"intro": "Parler \u00e0 l'ancienne du village (G pr\u00e8s d'elle).",
++		"defense": "D\u00e9fendre Astreval : repousser les trois pillards.",
++		"scouting": "Les \u00e9claireurs reconnaissent le village rival.",
++		"report": "Retrouver le guide pour entendre son rapport.",
++		"challenge": "Rencontrer le chef rival : duel ou tr\u00eave.",
++		"duel": "Duel 1 contre 1 : vaincre le chef rival avec le h\u00e9ros.",
++		"peace": "Paix conclue. Le village est sauv\u00e9.",
++		"defeat": "Le h\u00e9ros est tomb\u00e9. Le duel est perdu."
++	})[s.stage] || "";
++};
++
++Trigger.prototype.AstrevalNear = function(hero)
++{
++	const s = this.astreval;
++	if (!s || !this.AstrevalAlive(hero))
++		return 0;
++	let nearest = 0;
++	let best = 9;
++	for (const player of [1, 3])
++		for (const ent of TriggerHelper.GetEntitiesByPlayer(player))
++		{
++			if (ent == hero)
++				continue;
++			const identity = Engine.QueryInterface(ent, IID_Identity);
++			if (!identity || !["AstrevalElder", "AstrevalGuide", "AstrevalVillager",
++				"AstrevalRivalChief"].some(type => identity.HasClass(type)))
++				continue;
++			const distance = this.AstrevalDistance(hero, ent);
++			if (distance >= best)
++				continue;
++			nearest = ent;
++			best = distance;
++		}
++	return nearest;
++};
++
++Trigger.prototype.AstrevalGetDialogue = function(ent)
++{
++	const s = this.astreval;
++	const identity = Engine.QueryInterface(ent, IID_Identity);
++	if (!identity)
++		return null;
++	const options = (text, choices) => ({
++		"speaker": identity.GetGenericName(), "text": text,
++		"target": ent, "choices": choices.map(([label, action]) => ({ "label": label, "action": action }))
++	});
++	if (identity.HasClass("AstrevalElder"))
++	{
++		if (s.stage == "intro")
++			return options("Des pillards convoitent nos maisons. Les gardes tiennent la porte, mais nous avons besoin de votre aide.",
++				[["Prot\u00e9ger le village", "start"], ["J'\u00e9couterai plus tard", "close"]]);
++		if (s.stage == "defense" && !s.defenseHelp)
++			return options("Nous pouvons appeler deux aventuriers pour renforcer la d\u00e9fense, au prix de notre r\u00e9serve de bois.",
++				[["Appeler des renforts (-50 bois)", "reinforce"], ["Garder nos r\u00e9serves", "close"]]);
++		return options("Notre survie d\u00e9pend de vos d\u00e9cisions. " + this.AstrevalQuestText(), [["Je comprends", "close"]]);
++	}
++	if (identity.HasClass("AstrevalGuide"))
++	{
++		if (s.stage == "report")
++			return options("Le chef rival campe au-del\u00e0 des sentinelles. Mon rapport peut ouvrir un dialogue au lieu d'une guerre.",
++				[["Recevoir le rapport et partager la carte", "report"], ["Plus tard", "close"]]);
++		return options(s.stage == "scouting" ?
++			"Nos \u00e9claireurs progressent seuls; donnez-leur aussi des ordres en vue RTS si n\u00e9cessaire." :
++			"Les sentinelles patrouillent; le village reste \u00e0 l'\u00e9coute de votre d\u00e9cision.",
++			[["Merci", "close"]]);
++	}
++	if (identity.HasClass("AstrevalRivalChief"))
++	{
++		if (s.stage == "challenge")
++		{
++			const choices = [["Un duel \u00e0 l'\u00e9p\u00e9e, sans soldats", "duel"]];
++			if (s.reputation >= 4)
++				choices.push(["Proposer une tr\u00eave (r\u00e9putation 4)", "truce"]);
++			choices.push(["Revenir plus tard", "close"]);
++			return options("Vous avez d\u00e9fendu vos gens. Nous d\u00e9ciderons ici, face \u00e0 face, du sort des deux villages.", choices);
++		}
++		return options(s.stage == "peace" ? "La paix est scell\u00e9e. Que nos villages prosp\u00e8rent." :
++			"Revenez avec le rapport des \u00e9claireurs et une proposition honorable.", [["Partir", "close"]]);
++	}
++	if (identity.HasClass("AstrevalVillager"))
++		return options(s.villagersHelped[ent] ?
++			"Les remparts tiendront. Merci pour votre visite." :
++			"Les habitants r\u00e9parent les maisons. Un coup de main nous rendrait courage.",
++			s.villagersHelped[ent] ? [["Au revoir", "close"]] :
++			[["Aider les habitants (+r\u00e9putation)", "help"], ["Pas maintenant", "close"]]);
++	return null;
++};
++
++/** Client messages carry only a hero ID; the simulation chooses the nearby NPC. */
++Trigger.prototype.AstrevalInteract = function(player, hero)
++{
++	const s = this.astreval;
++	if (!s || player != 1 || hero != s.hero || TriggerHelper.GetOwner(hero) != player ||
++	    !Engine.QueryInterface(hero, IID_Identity)?.HasClass("AstrevalHero"))
++		return;
++	const ent = this.AstrevalNear(hero);
++	if (ent)
++		s.dialogue = this.AstrevalGetDialogue(ent);
++};
++
++Trigger.prototype.AstrevalChoose = function(player, hero, choice)
++{
++	const s = this.astreval;
++	if (!s || player != 1 || hero != s.hero || TriggerHelper.GetOwner(hero) != player ||
++	    !s.dialogue || !Number.isInteger(choice) || choice < -1 || choice > 2)
++		return;
++	if (choice == -1)
++	{
++		s.dialogue = null;
++		return;
++	}
++	const dialogue = s.dialogue;
++	if (!this.AstrevalAlive(hero) || this.AstrevalDistance(hero, dialogue.target) >= 11 ||
++	    !dialogue.choices[choice])
++	{
++		s.dialogue = null;
++		return;
++	}
++	const action = dialogue.choices[choice].action;
++	// A stale network command cannot be used to repeat a quest reward.
++	if (action == "start" && s.stage == "intro")
++	{
++		s.stage = "defense";
++		s.reputation++;
++		this.AstrevalStartRaid();
++	}
++	else if (action == "reinforce" && s.stage == "defense" && !s.defenseHelp)
++	{
++		const cmpPlayer = QueryPlayerIDInterface(1, IID_Player);
++		if (cmpPlayer && cmpPlayer.GetResourceCounts().wood >= 50)
++		{
++			cmpPlayer.AddResource("wood", -50);
++			s.defenseHelp = true;
++			for (let i = 0; i < 2; ++i)
++				this.AstrevalSpawn("units/spart/astreval_adventurer", 1,
++					s.home.x - 10 - i * 3, s.home.y + 14);
++		}
++	}
++	else if (action == "help" &&
++	    Engine.QueryInterface(dialogue.target, IID_Identity)?.HasClass("AstrevalVillager") &&
++	    !s.villagersHelped[dialogue.target])
++	{
++		s.villagersHelped[dialogue.target] = true;
++		s.reputation++;
++		QueryPlayerIDInterface(1, IID_Player)?.AddResource("wood", 15);
++	}
++	else if (action == "report" && s.stage == "report" && dialogue.target == s.guide)
++	{
++		s.stage = "challenge";
++		s.reputation++;
++		QueryPlayerIDInterface(1, IID_Player)?.AddResource("wood", 75);
++	}
++	else if (action == "duel" && s.stage == "challenge" && dialogue.target == s.chief)
++	{
++		s.stage = "duel";
++		s.duelStarted = true;
++		// Disable allied auto-attacks before declaring the two duelists hostile.
++		// This applies to vanilla troops too, not only our three custom roles.
++		for (const ent of TriggerHelper.GetEntitiesByPlayer(1))
++		{
++			if (ent == s.hero)
++				continue;
++			const ai = Engine.QueryInterface(ent, IID_UnitAI);
++			if (!ai)
++				continue;
++			s.duelStances[ent] = ai.GetStanceName();
++			ai.SwitchToStance("passive");
++			ai.Stop(false, false);
++			if (this.AstrevalDistance(ent, s.chief) < 35)
++				ai.Walk(s.home.x, s.home.y, false, false);
++			s.roles[ent] = "passive";
++		}
++		this.AstrevalSetDiplomacy(1, 3, true);
++		Engine.QueryInterface(s.chief, IID_UnitAI)?.SwitchToStance("aggressive");
++		Engine.QueryInterface(s.chief, IID_UnitAI)?.Attack(s.hero, false, false, false);
++	}
++	else if (action == "truce" && s.stage == "challenge" && s.reputation >= 4 && dialogue.target == s.chief)
++	{
++		s.stage = "peace";
++		QueryPlayerIDInterface(1, IID_Player)?.AddResource("wood", 80);
++		this.AstrevalSetDiplomacy(1, 3, false);
++	}
++	s.dialogue = null;
++};
++
++/** Return only player 1's quest, the controlled hero's nearby NPC and its dialogue. */
++Trigger.prototype.AstrevalGetView = function(player, hero)
++{
++	const s = this.astreval;
++	if (!s || player != 1)
++		return null;
++	const validHero = hero == s.hero && TriggerHelper.GetOwner(hero) == player && this.AstrevalAlive(hero);
++	const nearby = validHero && this.AstrevalNear(hero);
++	return {
++		"quest": this.AstrevalQuestText(), "stage": s.stage, "reputation": s.reputation,
++		"nearby": nearby ? Engine.QueryInterface(nearby, IID_Identity)?.GetGenericName() : "",
++		"dialogue": validHero && s.dialogue ? {
++			"speaker": s.dialogue.speaker, "text": s.dialogue.text,
++			"choices": s.dialogue.choices.map(({ label }) => label)
++		} : null
++	};
++};
++
++const cmpAstrevalVillageTrigger = Engine.QueryInterface(SYSTEM_ENTITY, IID_Trigger);
++cmpAstrevalVillageTrigger.RegisterTrigger("OnInitGame", "AstrevalInit", { "enabled": true });
+diff --git a/binaries/data/mods/public/simulation/components/GuiInterface.js b/binaries/data/mods/public/simulation/components/GuiInterface.js
+index d12bc2ca..33e17931 100644
+--- a/binaries/data/mods/public/simulation/components/GuiInterface.js
++++ b/binaries/data/mods/public/simulation/components/GuiInterface.js
+@@ -2074,7 +2074,15 @@ GuiInterface.prototype.OnGlobalEntityRenamed = function(msg)
+  * trusted and indicates the player associated with the current client; no data should
+  * be returned unless this player is meant to be able to see it.)
+  */
++/** A story exists only on maps that loaded its trigger script. Never expose an NPC
++ * outside player 1's nearby hero, nor trust an entity supplied by a GUI script. */
++GuiInterface.prototype.GetAstrevalVillageState = function(player, data)
++{
++	return Engine.QueryInterface(SYSTEM_ENTITY, IID_Trigger)?.AstrevalGetView?.(player, data?.hero);
++};
++
+ let exposedFunctions = {
++	"GetAstrevalVillageState": 1,
+ 
+ 	"GetSimulationState": 1,
+ 	"GetExtendedSimulationState": 1,
+diff --git a/binaries/data/mods/public/simulation/helpers/Commands.js b/binaries/data/mods/public/simulation/helpers/Commands.js
+index cc041a62..9cd0441e 100644
+--- a/binaries/data/mods/public/simulation/helpers/Commands.js
++++ b/binaries/data/mods/public/simulation/helpers/Commands.js
+@@ -39,7 +39,7 @@ function ProcessCommand(player, cmd)
+ 	let cmpGuiInterface = Engine.QueryInterface(SYSTEM_ENTITY, IID_GuiInterface);
+ 	// Directional control is frequent and should not produce player-order
+ 	// notifications (which can auto-focus the RTS camera or fill the GUI).
+-	if (cmd.type != "character-move" && cmd.type != "character-combat")
++	if (!["character-move", "character-combat", "astreval-interact", "astreval-choice"].includes(cmd.type))
+ 		cmpGuiInterface.PushNotification(commandData);
+ 
+ 	// Note: checks of UnitAI targets are not robust enough here, as ownership
+@@ -230,6 +230,25 @@ var g_Commands = {
+ 		}
+ 	},
+ 
++	/** Only the nearby hero may open a story conversation. NPCs are never
++	 * chosen by the untrusted client, and choices are checked against current
++	 * stage and distance in the deterministic map trigger. */
++	"astreval-interact": function(player, cmd, data)
++	{
++		if (data.entities?.length != 1 || cmd.entities?.length != 1)
++			return;
++		Engine.QueryInterface(SYSTEM_ENTITY, IID_Trigger)?.AstrevalInteract?.(player, data.entities[0]);
++	},
++
++	"astreval-choice": function(player, cmd, data)
++	{
++		if (data.entities?.length != 1 || cmd.entities?.length != 1 ||
++		    !Number.isInteger(cmd.choice) || cmd.choice < -1 || cmd.choice > 2)
++			return;
++		Engine.QueryInterface(SYSTEM_ENTITY, IID_Trigger)?.AstrevalChoose?.(
++			player, data.entities[0], cmd.choice);
++	},
++
+ 	"walk-custom": function(player, cmd, data)
+ 	{
+ 		for (let ent in data.entities)
+@@ -251,6 +270,8 @@ var g_Commands = {
+ 
+ 	"attack-walk": function(player, cmd, data)
+ 	{
++		if (player == 1 && Engine.QueryInterface(SYSTEM_ENTITY, IID_Trigger)?.astreval?.stage == "duel")
++			return; // Attack-move could recruit bystanders into the 1v1.
+ 		GetFormationUnitAIs(data.entities, player, cmd, data.formation).forEach(cmpUnitAI => {
+ 			cmpUnitAI.WalkAndFight(cmd.x, cmd.z, cmd.targetClasses, cmd.allowCapture, cmd.queued, cmd.pushFront);
+ 		});
+@@ -258,6 +279,8 @@ var g_Commands = {
+ 
+ 	"attack-walk-custom": function(player, cmd, data)
+ 	{
++		if (player == 1 && Engine.QueryInterface(SYSTEM_ENTITY, IID_Trigger)?.astreval?.stage == "duel")
++			return;
+ 		for (let ent in data.entities)
+ 			GetFormationUnitAIs([data.entities[ent]], player, cmd, data.formation).forEach(cmpUnitAI => {
+ 				cmpUnitAI.WalkAndFight(cmd.targetPositions[ent].x, cmd.targetPositions[ent].y, cmd.targetClasses, cmd.allowCapture, cmd.queued, cmd.pushFront);
+@@ -266,6 +289,10 @@ var g_Commands = {
+ 
+ 	"attack": function(player, cmd, data)
+ 	{
++		const story = Engine.QueryInterface(SYSTEM_ENTITY, IID_Trigger)?.astreval;
++		if (player == 1 && story?.stage == "duel" && cmd.target == story.chief)
++			data.entities = data.entities.filter(ent =>
++				Engine.QueryInterface(ent, IID_Identity)?.HasClass("AstrevalHero"));
+ 		GetFormationUnitAIs(data.entities, player, cmd, data.formation).forEach(cmpUnitAI => {
+ 			cmpUnitAI.Attack(cmd.target, cmd.allowCapture, cmd.queued, cmd.pushFront);
+ 		});
+@@ -273,6 +300,8 @@ var g_Commands = {
+ 
+ 	"patrol": function(player, cmd, data)
+ 	{
++		if (player == 1 && Engine.QueryInterface(SYSTEM_ENTITY, IID_Trigger)?.astreval?.stage == "duel")
++			return;
+ 		GetFormationUnitAIs(data.entities, player, cmd, data.formation).forEach(cmpUnitAI =>
+ 			cmpUnitAI.Patrol(cmd.x, cmd.z, cmd.targetClasses, cmd.allowCapture, cmd.queued)
+ 		);
+@@ -552,6 +581,9 @@ var g_Commands = {
+ 
+ 	"guard": function(player, cmd, data)
+ 	{
++		const story = Engine.QueryInterface(SYSTEM_ENTITY, IID_Trigger)?.astreval;
++		if (player == 1 && story?.stage == "duel" && cmd.target == story.hero)
++			return; // No escorts can protect the hero against the rival chief.
+ 		if (!IsOwnedByPlayerOrMutualAlly(cmd.target, player, data.controlAllUnits))
+ 		{
+ 			if (g_DebugCommands)
+@@ -718,8 +750,11 @@ var g_Commands = {
+ 
+ 	"stance": function(player, cmd, data)
+ 	{
++		const story = Engine.QueryInterface(SYSTEM_ENTITY, IID_Trigger)?.astreval;
+ 		for (let ent of data.entities)
+ 		{
++			if (player == 1 && story?.stage == "duel" && ent != story.hero)
++				continue;
+ 			var cmpUnitAI = Engine.QueryInterface(ent, IID_UnitAI);
+ 			if (cmpUnitAI && !cmpUnitAI.IsTurret())
+ 				cmpUnitAI.SwitchToStance(cmd.name);
+diff --git a/binaries/data/mods/public/simulation/templates/units/athen/astreval_defender.xml b/binaries/data/mods/public/simulation/templates/units/athen/astreval_defender.xml
+new file mode 100644
+index 00000000..9e0dccf2
+--- /dev/null
++++ b/binaries/data/mods/public/simulation/templates/units/athen/astreval_defender.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Entity parent="units/athen/infantry_spearman_b">
++  <Identity>
++    <Classes datatype="tokens">AstrevalDefender</Classes>
++    <GenericName>Garde du village d’Astreval</GenericName>
++  </Identity>
++  <Health><Max>175</Max></Health>
++  <UnitAI><DefaultStance>defensive</DefaultStance></UnitAI>
++  <Promotion disable=""/>
++</Entity>
+diff --git a/binaries/data/mods/public/simulation/templates/units/athen/astreval_elder.xml b/binaries/data/mods/public/simulation/templates/units/athen/astreval_elder.xml
+new file mode 100644
+index 00000000..85dcae63
+--- /dev/null
++++ b/binaries/data/mods/public/simulation/templates/units/athen/astreval_elder.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Entity parent="units/athen/support_female_citizen">
++  <Identity>
++    <Classes datatype="tokens">AstrevalElder</Classes>
++    <GenericName>Ancienne d’Astreval</GenericName>
++  </Identity>
++  <UnitAI><DefaultStance>passive</DefaultStance></UnitAI>
++</Entity>
+diff --git a/binaries/data/mods/public/simulation/templates/units/athen/astreval_guide.xml b/binaries/data/mods/public/simulation/templates/units/athen/astreval_guide.xml
+new file mode 100644
+index 00000000..e7789cfa
+--- /dev/null
++++ b/binaries/data/mods/public/simulation/templates/units/athen/astreval_guide.xml
+@@ -0,0 +1,9 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Entity parent="units/athen/infantry_javelineer_b">
++  <Identity>
++    <Classes datatype="tokens">AstrevalGuide</Classes>
++    <GenericName>Guide des sentinelles</GenericName>
++  </Identity>
++  <UnitAI><DefaultStance>passive</DefaultStance></UnitAI>
++  <Promotion disable=""/>
++</Entity>
+diff --git a/binaries/data/mods/public/simulation/templates/units/athen/astreval_scout.xml b/binaries/data/mods/public/simulation/templates/units/athen/astreval_scout.xml
+new file mode 100644
+index 00000000..99456f94
+--- /dev/null
++++ b/binaries/data/mods/public/simulation/templates/units/athen/astreval_scout.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Entity parent="units/athen/infantry_javelineer_b">
++  <Identity>
++    <Classes datatype="tokens">AstrevalScout</Classes>
++    <GenericName>Éclaireur d’Astreval</GenericName>
++  </Identity>
++  <Vision><Range>160</Range></Vision>
++  <UnitMotion><WalkSpeed>12</WalkSpeed></UnitMotion>
++  <UnitAI><DefaultStance>passive</DefaultStance></UnitAI>
++  <Promotion disable=""/>
++</Entity>
+diff --git a/binaries/data/mods/public/simulation/templates/units/athen/astreval_villager.xml b/binaries/data/mods/public/simulation/templates/units/athen/astreval_villager.xml
+new file mode 100644
+index 00000000..b79637ed
+--- /dev/null
++++ b/binaries/data/mods/public/simulation/templates/units/athen/astreval_villager.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Entity parent="units/athen/support_female_citizen">
++  <Identity>
++    <Classes datatype="tokens">AstrevalVillager</Classes>
++    <GenericName>Habitante d’Astreval</GenericName>
++  </Identity>
++  <UnitAI><DefaultStance>passive</DefaultStance></UnitAI>
++</Entity>
+diff --git a/binaries/data/mods/public/simulation/templates/units/athen/hero_astreval.xml b/binaries/data/mods/public/simulation/templates/units/athen/hero_astreval.xml
+index 25236457..d65ef031 100644
+--- a/binaries/data/mods/public/simulation/templates/units/athen/hero_astreval.xml
++++ b/binaries/data/mods/public/simulation/templates/units/athen/hero_astreval.xml
+@@ -18,7 +18,13 @@
+     </Melee>
+   </Attack>
+   <Selectable>
+-    <Overlay><Shape><Circle radius="1.0"/></Shape></Overlay>
++    <Overlay>
++      <!-- The base hero star is AlwaysVisible, so a GUI alpha of zero cannot
++           hide it. Remove that inherited flag for this hero only. The GUI
++           restores the same star in RTS, even when another unit is selected. -->
++      <AlwaysVisible disable=""/>
++      <Shape><Circle radius="1.0"/></Shape>
++    </Overlay>
+   </Selectable>
+   <VisualActor>
+     <Actor>units/astreval/hero_noir.xml</Actor>
+diff --git a/binaries/data/mods/public/simulation/templates/units/spart/astreval_adventurer.xml b/binaries/data/mods/public/simulation/templates/units/spart/astreval_adventurer.xml
+new file mode 100644
+index 00000000..304561d3
+--- /dev/null
++++ b/binaries/data/mods/public/simulation/templates/units/spart/astreval_adventurer.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Entity parent="units/spart/champion_infantry_swordsman">
++  <Identity>
++    <Classes datatype="tokens">AstrevalAdventurer</Classes>
++    <GenericName>Aventurier d’élite d’Astreval</GenericName>
++  </Identity>
++  <Health><Max>380</Max></Health>
++  <Attack><Melee><Damage><Hack>16</Hack></Damage></Melee></Attack>
++  <UnitAI><DefaultStance>defensive</DefaultStance></UnitAI>
++</Entity>
+diff --git a/binaries/data/mods/public/simulation/templates/units/spart/astreval_rival_chief.xml b/binaries/data/mods/public/simulation/templates/units/spart/astreval_rival_chief.xml
+new file mode 100644
+index 00000000..53b67215
+--- /dev/null
++++ b/binaries/data/mods/public/simulation/templates/units/spart/astreval_rival_chief.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<Entity parent="units/spart/hero_leonidas">
++  <Identity>
++    <Classes datatype="tokens">AstrevalRivalChief</Classes>
++    <GenericName>Chef du village rival</GenericName>
++    <SpecificName>Théon, chef rival</SpecificName>
++  </Identity>
++  <Health><Max>360</Max></Health>
++  <UnitAI><DefaultStance>passive</DefaultStance></UnitAI>
++  <Selectable><Overlay><AlwaysVisible disable=""/></Overlay></Selectable>
++</Entity>
+diff --git a/tools/astreval_village_tests/README.md b/tools/astreval_village_tests/README.md
+new file mode 100644
+index 00000000..9d2caacc
+--- /dev/null
++++ b/tools/astreval_village_tests/README.md
+@@ -0,0 +1,12 @@
++# Astreval village: deterministic test harness
++
++From the 0 A.D. repository root:
++
++```sh
++node tools/astreval_village_tests/quest_simulation.test.js
++node tools/astreval_village_tests/camera_gui.test.js
++```
++
++These scripts exercise the real map trigger, network command dispatcher,
++GUI controls and selection code with mock engine components. They do not replace
++a Pyrogenesis integration or GPU performance test.
+diff --git a/tools/astreval_village_tests/camera_gui.test.js b/tools/astreval_village_tests/camera_gui.test.js
+new file mode 100644
+index 00000000..10ca7965
+--- /dev/null
++++ b/tools/astreval_village_tests/camera_gui.test.js
+@@ -0,0 +1,68 @@
++/* GUI-only mock test. Real rendering still requires Pyrogenesis. */
++const assert=require('node:assert/strict'), fs=require('node:fs'), vm=require('node:vm'), path=require('node:path');
++const dir=path.join(__dirname,'../../binaries/data/mods/public/gui/session');
++const events=[],objects={};
++const states={
++  1:{player:1,identity:{controllable:true},unitAI:{},position:{x:10,z:10},rotationY:0,classes:['Unit','AstrevalHero'],astrevalCombat:{drawn:false,stamina:100,combo:0}},
++  2:{player:1,identity:{controllable:true},unitAI:{},position:{x:20,z:20},rotationY:0,classes:['Unit','Infantry']}
++};
++const selection={selected:1,getFirstSelected(){return this.selected;},size(){return this.selected?1:0;},reset(){this.selected=0;},addList(ents){this.selected=ents[0];}};
++let view={quest:'Parler à l’ancienne.',reputation:0,stage:'intro',nearby:'Ancienne',dialogue:null};
++const ctx={
++  g_Disconnected:false,g_Selection:selection,controlsPlayer:p=>p===1,
++  GetEntityState:id=>states[id]||null,hasClass:(s,cls)=>s?.classes.includes(cls),
++  translate:s=>s,sprintf:(s,opts)=>s.replace(/%\(([^)]+)\)s/g,(_,key)=>opts[key]),
++  GetSimState:()=>({cinemaPlaying:false}),
++  registerConfigChangeHandler:()=>{},
++  Engine:{
++    ConfigDB_GetValue:()=>'',
++    GetPlayerID:()=>1,IsPaused:()=>false,GetFollowedEntity:()=>0,
++    GuiInterfaceCall(name,data){
++      if (name==='GetAstrevalVillageState') return data.hero ? view : {...view,nearby:'',dialogue:null};
++      if (name==='GetPlayerEntities') return [2,1];
++      if (name==='SetSelectionHighlight') events.push(['marker',data]);
++      return null;
++    },
++    GetGUIObjectByName(name){return objects[name]??=({hidden:true,caption:''});},
++    CameraFollowThirdPerson(ent){events.push(['camera',ent]);},
++    PostNetworkCommand(cmd){events.push(['command',cmd]);}
++  }
++};
++vm.createContext(ctx);
++for (const file of ['selection.js','character_controller.js','third_person_camera.js','astreval_village_ui.js'])
++  vm.runInContext(fs.readFileSync(path.join(dir,file),'utf8'),ctx,{filename:file});
++ctx.g_Selection=selection; // replace native selector with the simplified selection fixture
++ctx.g_CharacterController=vm.runInContext('new CharacterController()',ctx);
++ctx.g_AstrevalVillageUI=vm.runInContext('new AstrevalVillageUI()',ctx);
++ctx.updateThirdPersonCamera();
++assert.equal(events.at(-2)[0],'camera');
++assert.equal(events.at(-2)[1],1);
++assert.equal(events.at(-1)[1].selected,false,'selected hero star hidden in TPS');
++ctx.g_AstrevalVillageUI.update();
++assert.equal(objects.astrevalQuestJournal.hidden,false);
++assert.equal(objects.astrevalTalkPrompt.hidden,false);
++ctx.g_AstrevalVillageUI.interact();
++assert.equal(events.at(-1)[1].type,'astreval-interact');
++view={...view,dialogue:{speaker:'Ancienne',text:'Défendez le village.',choices:['Oui','Plus tard']}};
++ctx.g_AstrevalVillageUI.update();
++assert(ctx.g_AstrevalVillageUI.dialogueActive);
++assert.equal(objects.astrevalDialoguePanel.hidden,false);
++assert.equal(objects.astrevalChoice2.hidden,true);
++ctx.g_AstrevalVillageUI.choose(0);
++assert.equal(events.at(-1)[1].choice,0);
++assert.equal(ctx.g_CharacterController.combat('equip'),false,'combat disabled in dialogue');
++view={...view,dialogue:null};
++ctx.g_AstrevalVillageUI.update();
++ctx.toggleThirdPersonCamera();
++assert.equal(vm.runInContext('g_ThirdPersonCameraEnabled',ctx),false);
++assert(events.some(e=>e[0]==='marker'&&e[1].selected&&e[1].alpha>=0.65), 'star restored in RTS');
++selection.selected=2;
++ctx.updateThirdPersonCamera();
++assert.equal(vm.runInContext('g_ThirdPersonCameraEnabled',ctx),false);
++ctx.selectCharacter();
++assert.equal(selection.selected,1);
++assert.equal(vm.runInContext('g_ThirdPersonCameraEnabled',ctx),true,'F4 returns to hero TPS');
++selection.selected=2;
++ctx.updateThirdPersonCamera();
++assert.equal(vm.runInContext('g_ThirdPersonCameraEnabled',ctx),false,'selecting an infantryman switches to RTS');
++console.log('OK: hero-only TPS, RTS restoration, star visibility, nearby prompt, validated dialogue commands, modal hero controls');
+diff --git a/tools/astreval_village_tests/quest_simulation.test.js b/tools/astreval_village_tests/quest_simulation.test.js
+new file mode 100644
+index 00000000..994ba022
+--- /dev/null
++++ b/tools/astreval_village_tests/quest_simulation.test.js
+@@ -0,0 +1,197 @@
++/* Offline deterministic API harness for the map script and 0 A.D. commands.
++ * Run with: node tests/quest_simulation.test.js
++ * Not a substitute for a Pyrogenesis rendering/integration test.
++ */
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const path = require('node:path');
++const vm = require('node:vm');
++const base = path.join(__dirname, '..', '..', 'binaries/data/mods/public');
++
++function createWorld() {
++  const entities = new Map();
++  const players = new Map();
++  const diplomacy = [];
++  let nextID = 100, time = 0;
++  for (const id of [1,2,3]) players.set(id, {
++    resources: {wood:300}, CanControlAllUnits() { return false; },
++    GetResourceCounts() { return this.resources; },
++    AddResource(type, amount) { this.resources[type] = (this.resources[type] || 0) + amount; }
++  });
++  function add(owner, cls, name, x, z) {
++    const ent = nextID++;
++    const e = {owner, cls, name, x, z, hp: 300, aiOrders: [], stance: 'aggressive'};
++    entities.set(ent,e);
++    return ent;
++  }
++  const hero = add(1,['Unit','AstrevalHero'],'Gardien',354,306);
++  const elder = add(1,['Unit','AstrevalElder'],'Ancienne',359,312);
++  const guide = add(1,['Unit','AstrevalGuide'],'Guide',346,312);
++  const villager = add(1,['Unit','AstrevalVillager'],'Habitante',365,319);
++  const defender = add(1,['Unit','AstrevalDefender'],'Garde',324,328);
++  const scout = add(1,['Unit','AstrevalScout'],'Éclaireur',379,310);
++  const chief = add(3,['Unit','AstrevalRivalChief'],'Chef',518,431);
++  const idTypes = ['Identity','Position','Ownership','Health','UnitAI'];
++  const iids = Object.fromEntries(idTypes.map(t=>['IID_'+t,t]));
++  Object.assign(iids,{IID_Trigger:'Trigger',IID_Diplomacy:'Diplomacy',IID_Player:'Player',IID_GuiInterface:'GuiInterface'});
++  const ctx = {
++    ...iids, SYSTEM_ENTITY:0, NULL_FORMATION:'special/formations/null',
++    Trigger: function(){}, warn(msg) {throw new Error(msg);}, error(msg) {throw new Error(msg);},
++    QueryPlayerIDInterface(p, iid) {
++      if (iid == 'Player' || !iid) return players.get(p);
++      if (iid == 'Diplomacy') return {
++        SetEnemy(target){diplomacy.push({p,target,enemy:true});},
++        SetNeutral(target){diplomacy.push({p,target,enemy:false});}
++      };
++      return null;
++    },
++    TriggerHelper: {
++      GetEntitiesByPlayer(p){return Array.from(entities).filter(([id,e])=>e.owner==p).map(([id])=>id);},
++      GetOwner(id){return entities.get(id)?.owner ?? -1;},
++      GetTime(){return time;}
++    },
++    Engine: {
++      RegisterGlobal(name, fn){ctx[name]=fn;},
++      QueryInterface(ent,iid){
++        if (ent === 0) return {Trigger:t, GuiInterface:{PushNotification(){}}}[iid] || null;
++        const e=entities.get(ent);
++        if (!e) return null;
++        if (iid=='Identity') return {HasClass(c){return e.cls.includes(c);},GetGenericName(){return e.name;}};
++        if (iid=='Ownership') return {GetOwner(){return e.owner;},SetOwner(p){e.owner=p;}};
++        if (iid=='Position') return {
++          IsInWorld(){return e.hp>0;}, GetPosition2D(){return {x:e.x,y:e.z};},
++          JumpTo(x,z){e.x=x;e.z=z;}
++        };
++        if (iid=='Health') return {GetHitpoints(){return e.hp;}};
++        if (iid=='UnitAI') return {
++          GetStanceName(){return e.stance;},
++          SwitchToStance(s){e.stance=s;},
++          Attack(...args){e.aiOrders.push(['Attack',...args]);},
++          Walk(...args){e.aiOrders.push(['Walk',...args]);},
++          Stop(...args){e.aiOrders.push(['Stop',...args]);},
++          WalkAndFight(...args){e.aiOrders.push(['WalkAndFight',...args]);}
++        };
++        return null;
++      },
++      AddEntity(template) {return add(-1, ['Unit'], template, -1,-1);},
++      DestroyEntity(ent){entities.delete(ent);}
++    },
++    GetFormationUnitAIs(ents){return ents.map(id=>ctx.Engine.QueryInterface(id,'UnitAI'));},
++    FilterEntityList(ents,p) {return ents.filter(ent=>entities.get(ent)?.owner==p);}
++  };
++  const t = new ctx.Trigger();
++  t.RegisterTrigger = (name,action) => assert.equal(typeof t[action], 'function');
++  t.CallEvent = (event, data) => {
++    if (event=='OnPlayerCommand') t.AstrevalPlayerCommand(data);
++  };
++  vm.createContext(ctx);
++  vm.runInContext(fs.readFileSync(path.join(base,'maps/scripts/astreval_village.js'),'utf8'),ctx);
++  vm.runInContext(fs.readFileSync(path.join(base,'simulation/helpers/Commands.js'),'utf8'),ctx);
++  // Replace unrelated formation/selection internals; exercise the real command
++  // dispatch, our validation hooks and the full map trigger instead.
++  ctx.FilterEntityList = (ents,p) => ents.filter(ent=>entities.get(ent)?.owner==p);
++  ctx.GetFormationUnitAIs = ents => ents.map(id=>ctx.Engine.QueryInterface(id,'UnitAI'));
++  t.AstrevalInit();
++  const move=(ent,x,z)=>{entities.get(ent).x=x;entities.get(ent).z=z;};
++  const cmd=(p,type,ent,rest={})=>ctx.ProcessCommand(p,{type,entities:[ent],...rest});
++  return {t, ctx, entities, hero, elder, guide, villager, defender, scout, chief,
++          move,cmd, players, diplomacy, nextTime(n){time+=n;}};
++}
++
++function beginAndDefend(w){
++  const {t,hero,elder,cmd,entities,defender,nextTime} = w;
++  assert.equal(t.astreval.stage,'intro');
++  assert.equal(t.AstrevalGetView(2,hero),null,'private story not exposed to other player');
++  cmd(2,'astreval-interact',hero);
++  assert.equal(t.astreval.dialogue,null,'foreign player cannot talk');
++  cmd(1,'astreval-interact',hero);
++  assert.equal(t.astreval.dialogue.target,elder);
++  cmd(1,'astreval-choice',hero,{choice:0});
++  assert.equal(t.astreval.stage,'defense');
++  assert.equal(t.astreval.raiders.length,3);
++  assert.equal(t.astreval.dialogue,null);
++  assert(t.astreval.raiders.every(id=>entities.get(id).owner===2));
++  cmd(1,'walk',defender,{x:310,z:305});
++  assert(t.astreval.manualUntil[defender]>0,'RTS command temporarily overrides autonomy');
++  const raid=t.astreval.raiders[0];
++  w.move(raid,defender && 367,333); // attackers approach the village in the native pathfinder
++  cmd(2,'astreval-choice',hero,{choice:0});
++  assert.equal(t.astreval.stage,'defense');
++  nextTime(36000);
++  t.AstrevalTick();
++  assert(entities.get(defender).aiOrders.some(o=>o[0]=='Attack'),'guard engages local raider');
++  t.astreval.raiders.forEach(id=>{entities.get(id).hp=0;});
++  t.AstrevalTick();
++  assert.equal(t.astreval.stage,'scouting');
++  assert.equal(t.astreval.reputation,2);
++  assert(w.diplomacy.some(d=>d.p==1&&d.target==2&&!d.enemy),'enemy restored to neutral after raid');
++}
++
++function scoutingAndReporting(w){
++  const {t,hero,scout,guide,move,cmd,entities,players} = w;
++  const dest=t.astreval.rival;
++  move(scout,dest.x-25,dest.y-15);
++  t.AstrevalTick();
++  assert.equal(t.astreval.stage,'report');
++  move(hero,346,306); // within 9 metres of the guide
++  cmd(1,'astreval-interact',hero);
++  assert.equal(t.astreval.dialogue.target,guide);
++  const before=players.get(1).resources.wood;
++  cmd(1,'astreval-choice',hero,{choice:0});
++  assert.equal(t.astreval.stage,'challenge');
++  assert.equal(players.get(1).resources.wood,before+75);
++  cmd(1,'astreval-choice',hero,{choice:0});
++  assert.equal(players.get(1).resources.wood,before+75,'no duplicate reward on stale command');
++}
++
++function duel(){
++  const w=createWorld();
++  beginAndDefend(w); scoutingAndReporting(w);
++  const {t,hero,chief,defender,entities,cmd,move,players}=w;
++  move(hero,514,428);
++  const wood=players.get(1).resources.wood;
++  cmd(1,'astreval-interact',hero);
++  assert.equal(t.astreval.dialogue.target,chief);
++  cmd(1,'astreval-choice',hero,{choice:0});
++  assert.equal(t.astreval.stage,'duel');
++  assert.equal(entities.get(chief).stance,'aggressive');
++  const before=entities.get(defender).aiOrders.length;
++  assert.equal(entities.get(defender).stance,'passive');
++  cmd(1,'stance',defender,{name:'aggressive'});
++  assert.equal(entities.get(defender).stance,'passive','duel cannot be broken with an RTS stance change');
++  cmd(1,'attack',defender,{target:chief});
++  cmd(1,'attack-walk',defender,{x:518,z:431});
++  assert.equal(entities.get(defender).aiOrders.length,before,'nonhero attack and attack-move on chief blocked');
++  cmd(1,'attack',hero,{target:chief});
++  assert(entities.get(hero).aiOrders.some(o=>o[0]=='Attack'&&o[1]===chief));
++  entities.get(chief).hp=0;
++  t.AstrevalTick();
++  assert.equal(t.astreval.stage,'peace');
++  assert.equal(players.get(1).resources.wood,wood+180);
++}
++
++function truce(){
++  const w=createWorld();
++  beginAndDefend(w); scoutingAndReporting(w);
++  const {t,hero,chief,villager,cmd,move,players}=w;
++  move(hero,514,428);
++  cmd(1,'astreval-interact',hero);
++  assert.equal(t.astreval.dialogue.choices[1].action,'close','truce unavailable without helping residents');
++  cmd(1,'astreval-choice',hero,{choice:1});
++  move(hero,364,315);
++  cmd(1,'astreval-interact',hero);
++  assert.equal(t.astreval.dialogue.target,villager);
++  cmd(1,'astreval-choice',hero,{choice:0});
++  assert.equal(t.astreval.reputation,4);
++  move(hero,514,428);
++  cmd(1,'astreval-interact',hero);
++  assert.equal(t.astreval.dialogue.choices[1].action,'truce');
++  cmd(1,'astreval-choice',hero,{choice:1});
++  assert.equal(t.astreval.stage,'peace');
++  assert.equal(t.astreval.duelStarted,false);
++  assert.equal(players.get(1).resources.wood,470);
++}
++
++duel();
++truce();
++console.log('OK: ownership/distance, one-off rewards, raid, manual RTS override, autonomous defense/scouts, report, duel, 1v1 guard and truce');
+diff --git a/tools/play_astreval.py b/tools/play_astreval.py
+index a2398e64..474ecce6 100644
+--- a/tools/play_astreval.py
++++ b/tools/play_astreval.py
+@@ -2,6 +2,7 @@
+ """Play Astreval on the *actual* 0 A.D. engine with reversible 4K presets.
+ 
+     python3 tools/play_astreval.py --quality cinematic --map astreval_arcadia
++    python3 tools/play_astreval.py --quality balanced --map astreval_village
+     python3 tools/play_astreval.py --quality balanced --map astreval_duel
+     python3 tools/play_astreval.py --quality performance --resolution 3840x2160
+ 
+@@ -65,7 +66,7 @@ def config_args(quality: str, resolution: str | None, backend: str) -> list[str]
+ def main() -> None:
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--quality", choices=PRESETS, default="balanced")
+-    parser.add_argument("--map", choices=("astreval_arcadia", "astreval_first_steps", "astreval_duel"),
++    parser.add_argument("--map", choices=("astreval_arcadia", "astreval_village", "astreval_first_steps", "astreval_duel"),
+                         default="astreval_arcadia")
+     parser.add_argument("--resolution", help="Force WxH, e.g. 3840x2160")
+     parser.add_argument("--backend", choices=("gl", "vulkan"), default="gl")
